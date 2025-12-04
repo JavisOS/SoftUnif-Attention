@@ -73,7 +73,7 @@ class VanillaAttention(nn.Module):
         self.out_proj = nn.Linear(hidden_dim, hidden_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, mask=None, rotary_pos_emb=None):
+    def forward(self, x, mask=None, rotary_pos_emb=None, static_x=None):
         # x: [batch_size, seq_len, hidden_dim]
         # mask: [batch_size, seq_len] (1 for valid, 0 for padding)
         batch_size, seq_len, _ = x.size()
@@ -135,18 +135,29 @@ class SoftUnifAttention(nn.Module):
         # Initialize to a positive value so that initially the model allows most interactions (soft mask ~ 1)
         self.type_bias = nn.Parameter(torch.ones(self.num_heads) * 2.0)
 
-    def forward(self, x, mask=None, rotary_pos_emb=None):
+    def forward(self, x, mask=None, rotary_pos_emb=None, static_x=None):
         batch_size, seq_len, _ = x.size()
 
-        q = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        k = self.k_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        # Value projections use the dynamic hidden state x
+        q_val_full = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        k_val_full = self.k_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
+        # Type projections use the STATIC embedding static_x if provided, else x
+        # This enforces "Static Type Anchoring"
+        type_input = static_x if static_x is not None else x
+        q_type_full = self.q_proj(type_input).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        k_type_full = self.k_proj(type_input).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+
         # Split into value and type
-        q_val = q[..., :self.value_dim]
-        q_type = q[..., self.value_dim:]
-        k_val = k[..., :self.value_dim]
-        k_type = k[..., self.value_dim:]
+        # Note: We use the same projection matrices q_proj/k_proj for both, but apply them to different inputs
+        # and then slice. This effectively means we have shared weights but different inputs.
+        
+        q_val = q_val_full[..., :self.value_dim]
+        k_val = k_val_full[..., :self.value_dim]
+        
+        q_type = q_type_full[..., self.value_dim:]
+        k_type = k_type_full[..., self.value_dim:]
 
         # Apply RoPE ONLY to value part
         if rotary_pos_emb is not None:
@@ -222,9 +233,9 @@ class TransformerEncoderLayer(nn.Module):
         )
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, mask=None, rotary_pos_emb=None):
+    def forward(self, x, mask=None, rotary_pos_emb=None, static_x=None):
         # Self Attention
-        attn_out = self.attention(x, mask, rotary_pos_emb)
+        attn_out = self.attention(x, mask, rotary_pos_emb, static_x)
         x = self.norm1(x + self.dropout(attn_out))
         
         # FFN
@@ -236,8 +247,7 @@ class SmallTransformerEncoder(nn.Module):
     def __init__(self, vocab_size, hidden_dim, num_layers, num_heads, ffn_dim, dropout, max_len=512, attention_type='vanilla'):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, hidden_dim)
-        # REMOVED absolute positional embedding
-        # self.pos_embedding = nn.Embedding(max_len, hidden_dim)
+        # Absolute positional embedding is intentionally removed to prevent leakage into Type subspace
         self.dropout = nn.Dropout(dropout)
         
         self.layers = nn.ModuleList([
@@ -262,13 +272,17 @@ class SmallTransformerEncoder(nn.Module):
         
         # Raw semantic embeddings (No positional info added here)
         x = self.embedding(input_ids)
+        
+        # Capture static embeddings for Type Anchoring
+        static_x = x
+        
         x = self.dropout(x)
         
         # Get RoPE embeddings
         cos, sin = self.rotary_emb(x, seq_len=seq_len)
         
         for layer in self.layers:
-            x = layer(x, attention_mask, rotary_pos_emb=(cos, sin))
+            x = layer(x, attention_mask, rotary_pos_emb=(cos, sin), static_x=static_x)
             
         x = self.norm(x)
         return x
