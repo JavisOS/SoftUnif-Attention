@@ -5,6 +5,60 @@ import math
 import re
 from transformers import RobertaTokenizerFast
 
+# --- RoPE Implementation ---
+
+class RotaryEmbedding(nn.Module):
+    def __init__(self, dim, max_position_embeddings=2048, base=10000):
+        super().__init__()
+        self.dim = dim
+        self.base = base
+        self.max_position_embeddings = max_position_embeddings
+        # Precompute inverse frequencies
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer("inv_freq", inv_freq)
+        
+        # Cache for cos/sin
+        self._set_cos_sin_cache(max_position_embeddings)
+
+    def _set_cos_sin_cache(self, seq_len):
+        self.max_seq_len_cached = seq_len
+        t = torch.arange(seq_len, device=self.inv_freq.device, dtype=self.inv_freq.dtype)
+        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
+        # Different from complex number implementation, let's use the sin/cos cache approach
+        # freqs: [seq_len, dim/2]
+        # We want [seq_len, dim] where we interleave or concat. 
+        # Standard RoPE usually does pairs. 
+        # Let's use the cat approach: [cos, cos] corresponding to [x1, x2]
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer("cos_cached", emb.cos()[None, None, :, :], persistent=False)
+        self.register_buffer("sin_cached", emb.sin()[None, None, :, :], persistent=False)
+
+    def forward(self, x, seq_len=None):
+        # x: [batch, num_heads, seq_len, head_dim]
+        if seq_len > self.max_seq_len_cached:
+            self._set_cos_sin_cache(seq_len)
+            
+        return (
+            self.cos_cached[:, :, :seq_len, ...].to(dtype=x.dtype, device=x.device),
+            self.sin_cached[:, :, :seq_len, ...].to(dtype=x.dtype, device=x.device),
+        )
+
+def rotate_half(x):
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+def apply_rotary_pos_emb(q, k, cos, sin):
+    # q, k: [batch, num_heads, seq_len, head_dim]
+    # cos, sin: [1, 1, seq_len, head_dim]
+    # Ensure dimensions match for broadcasting
+    # cos/sin are [1, 1, seq_len, head_dim]
+    # q/k are [batch, num_heads, seq_len, head_dim]
+    return (q * cos) + (rotate_half(q) * sin), (k * cos) + (rotate_half(k) * sin)
+
+# --- Attention Modules ---
+
 class VanillaAttention(nn.Module):
     def __init__(self, hidden_dim, num_heads, dropout=0.1):
         super().__init__()
@@ -19,7 +73,7 @@ class VanillaAttention(nn.Module):
         self.out_proj = nn.Linear(hidden_dim, hidden_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, rotary_pos_emb=None):
         # x: [batch_size, seq_len, hidden_dim]
         # mask: [batch_size, seq_len] (1 for valid, 0 for padding)
         batch_size, seq_len, _ = x.size()
@@ -27,6 +81,11 @@ class VanillaAttention(nn.Module):
         q = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+
+        # Apply RoPE
+        if rotary_pos_emb is not None:
+            cos, sin = rotary_pos_emb
+            q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
         # Scores: [batch_size, num_heads, seq_len, seq_len]
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
@@ -57,9 +116,6 @@ class SoftUnifAttention(nn.Module):
         assert self.head_dim * num_heads == hidden_dim, "hidden_dim must be divisible by num_heads"
 
         # Split head_dim into value_dim and type_dim
-        # For simplicity, let's split evenly or define a ratio. 
-        # The prompt says "explicitly partition". Let's say 50/50 for now, or make it configurable.
-        # If head_dim is odd, this might be an issue. Let's assume even for now.
         self.value_dim = self.head_dim // 2
         self.type_dim = self.head_dim - self.value_dim
 
@@ -79,7 +135,7 @@ class SoftUnifAttention(nn.Module):
         # Initialize to a positive value so that initially the model allows most interactions (soft mask ~ 1)
         self.type_bias = nn.Parameter(torch.ones(self.num_heads) * 2.0)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, rotary_pos_emb=None):
         batch_size, seq_len, _ = x.size()
 
         q = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
@@ -92,6 +148,13 @@ class SoftUnifAttention(nn.Module):
         k_val = k[..., :self.value_dim]
         k_type = k[..., self.value_dim:]
 
+        # Apply RoPE ONLY to value part
+        if rotary_pos_emb is not None:
+            cos, sin = rotary_pos_emb
+            # Note: cos, sin must match value_dim
+            q_val, k_val = apply_rotary_pos_emb(q_val, k_val, cos, sin)
+            # q_type, k_type are NOT rotated -> Position Invariant
+
         # 1. Value Similarity (Vanilla-like)
         # [batch_size, num_heads, seq_len, seq_len]
         val_scores = torch.matmul(q_val, k_val.transpose(-2, -1)) / math.sqrt(self.value_dim)
@@ -102,17 +165,8 @@ class SoftUnifAttention(nn.Module):
         # W: [H, D_t, D_t]
         # k_type: [B, H, L, D_t]
         
-        # Let's reshape to use matmul efficiently
-        # q_type_W = q_type @ W
-        # But W is per head.
-        # We can use einsum.
-        # B: batch, H: heads, L: seq_len, S: seq_len (target), D: type_dim
-        # q: BHLD, k: BHSD, W: HDD
-        # result: BHLS
-        
         # q_type @ W
         # [B, H, L, D] @ [H, D, D] -> [B, H, L, D] (broadcasting over B)
-        # Actually torch.matmul handles broadcasting if dimensions match.
         # We need to align W to [1, H, D, D]
         W_expanded = self.type_bilinear.unsqueeze(0) # [1, H, D, D]
         q_type_transformed = torch.matmul(q_type, W_expanded) # [B, H, L, D]
@@ -126,14 +180,6 @@ class SoftUnifAttention(nn.Module):
         type_unification = torch.sigmoid(type_scores_raw)
 
         # 3. Combine
-        # Prompt: "combine value similarity and type unification... e.g. multiplication, addition"
-        # Let's use multiplication in probability space, which corresponds to addition in log space.
-        # But val_scores are logits (unbounded).
-        # If we treat type_unification as a gating factor (0-1), we can multiply the attention weights?
-        # Or we can add log(type_unification) to val_scores?
-        # Let's try: final_score = val_scores + log(type_unification + epsilon)
-        # Or simply: final_score = val_scores * type_unification? No, val_scores can be negative.
-        
         # Let's interpret type_unification as a soft mask.
         # If type_unification is 1, we keep val_scores.
         # If type_unification is 0, we want score to be -inf.
@@ -176,9 +222,9 @@ class TransformerEncoderLayer(nn.Module):
         )
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, rotary_pos_emb=None):
         # Self Attention
-        attn_out = self.attention(x, mask)
+        attn_out = self.attention(x, mask, rotary_pos_emb)
         x = self.norm1(x + self.dropout(attn_out))
         
         # FFN
@@ -190,7 +236,8 @@ class SmallTransformerEncoder(nn.Module):
     def __init__(self, vocab_size, hidden_dim, num_layers, num_heads, ffn_dim, dropout, max_len=512, attention_type='vanilla'):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, hidden_dim)
-        self.pos_embedding = nn.Embedding(max_len, hidden_dim)
+        # REMOVED absolute positional embedding
+        # self.pos_embedding = nn.Embedding(max_len, hidden_dim)
         self.dropout = nn.Dropout(dropout)
         
         self.layers = nn.ModuleList([
@@ -199,16 +246,29 @@ class SmallTransformerEncoder(nn.Module):
         ])
         
         self.norm = nn.LayerNorm(hidden_dim)
+        
+        # Initialize RoPE
+        if attention_type == 'softunif':
+            # SoftUnif splits head_dim in half, only applies RoPE to value part
+            rope_dim = (hidden_dim // num_heads) // 2
+        else:
+            # Vanilla applies RoPE to full head_dim
+            rope_dim = hidden_dim // num_heads
+            
+        self.rotary_emb = RotaryEmbedding(rope_dim, max_position_embeddings=max_len)
 
     def forward(self, input_ids, attention_mask=None):
         seq_len = input_ids.size(1)
-        pos_ids = torch.arange(seq_len, device=input_ids.device).unsqueeze(0)
         
-        x = self.embedding(input_ids) + self.pos_embedding(pos_ids)
+        # Raw semantic embeddings (No positional info added here)
+        x = self.embedding(input_ids)
         x = self.dropout(x)
         
+        # Get RoPE embeddings
+        cos, sin = self.rotary_emb(x, seq_len=seq_len)
+        
         for layer in self.layers:
-            x = layer(x, attention_mask)
+            x = layer(x, attention_mask, rotary_pos_emb=(cos, sin))
             
         x = self.norm(x)
         return x
