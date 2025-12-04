@@ -81,6 +81,18 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# 忽略本地下载的大模型文件夹
+roberta-base/
+
+# 忽略 WandB 的本地日志
+wandb/
+
+# 忽略 IDE 配置 (如果你用 VSCode)
+.vscode/
+
+# 忽略系统文件 (Mac)
+.DS_Store
+
 # IPython
 profile_default/
 ipython_config.py
