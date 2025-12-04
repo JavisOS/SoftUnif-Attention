@@ -1,4 +1,5 @@
 import os
+import wandb
 
 from argparse import ArgumentParser
 from tqdm import tqdm
@@ -75,11 +76,29 @@ class CLUTRRDataset:
 
 
 def clutrr_loader(root, dataset, batch_size, training_data_percentage):
-  train_dataset = CLUTRRDataset(root, dataset, "train", training_data_percentage)
-  train_loader = DataLoader(train_dataset, batch_size, collate_fn=CLUTRRDataset.collate_fn, shuffle=True)
-  test_dataset = CLUTRRDataset(root, dataset, "test", 100)
-  test_loader = DataLoader(test_dataset, batch_size, collate_fn=CLUTRRDataset.collate_fn, shuffle=True)
-  return (train_loader, test_loader)
+    train_dataset = CLUTRRDataset(root, dataset, "train", training_data_percentage)
+    # 修改 1：训练集，8个进程 + 锁页内存
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size, 
+        collate_fn=CLUTRRDataset.collate_fn, 
+        shuffle=True, 
+        num_workers=8, 
+        pin_memory=False
+    )
+    
+    test_dataset = CLUTRRDataset(root, dataset, "test", 100)
+    # 修改 2：测试集，4个进程 + 锁页内存
+    test_loader = DataLoader(
+        test_dataset, 
+        batch_size, 
+        collate_fn=CLUTRRDataset.collate_fn, 
+        shuffle=True, 
+        num_workers=4, 
+        pin_memory=False
+    )
+    
+    return (train_loader, test_loader)
 
 
 class MLP(nn.Module):
@@ -126,8 +145,8 @@ class CLUTRRModel(nn.Module):
     self.scallop_softmax = scallop_softmax
 
     # Roberta as embedding extraction model
-    self.tokenizer = RobertaTokenizer.from_pretrained("roberta-base", local_files_only=True, add_prefix_space=True)
-    self.roberta_model = RobertaModel.from_pretrained("roberta-base")
+    self.tokenizer = RobertaTokenizer.from_pretrained("roberta-base", local_files_only=False, add_prefix_space=True)
+    self.roberta_model = RobertaModel.from_pretrained("./roberta-base")
     self.embed_dim = self.roberta_model.config.hidden_size
 
     # Entity embedding
@@ -456,6 +475,11 @@ if __name__ == "__main__":
   parser.add_argument("--gpu", type=int, default=0)
   args = parser.parse_args()
   print(args)
+    
+  # ========== 【新增：WandB 初始化】 ==========
+  # 初始化 WandB，project 是项目名，config 是你的参数
+  wandb.init(project="clutrr-training", name=f"batch_{args.batch_size}_workers_8", config=args)
+  # ==========================================
 
   project_name = args.scl_file_name[:-4]
   name = f"training_perc_{args.training_data_percentage}_seed_{args.seed}_{project_name}"
