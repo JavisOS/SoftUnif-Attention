@@ -186,8 +186,16 @@ class SoftUnifAttention(nn.Module):
         # [B, H, L, D] @ [B, H, D, S] -> [B, H, L, S]
         type_scores_raw = torch.matmul(q_type_transformed, k_type.transpose(-2, -1))
         
-        # Add bias and sigmoid
+        
+        # === 【新增：缩放 + Bias】 ===
+        # 1. 缩放：除以 sqrt(d) 以稳定梯度方差
+        type_scores_raw = type_scores_raw / math.sqrt(self.type_dim)
+        
+        # 2. 加 Bias：让初始门控开启
+        # view(1, heads, 1, 1) 用于广播到 batch 和 seq_len
         type_scores_raw = type_scores_raw + self.type_bias.view(1, self.num_heads, 1, 1)
+        # ============================
+
         type_unification = torch.sigmoid(type_scores_raw)
 
         # 3. Combine
