@@ -312,7 +312,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--dataset", type=str, default="data_db9b8f04", help="Dataset folder name")
     parser.add_argument("--data_percentage", type=int, default=100)
-    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--lr", type=float, default=2e-5) # Lower LR for RoBERTa
     parser.add_argument("--weight_decay", type=float, default=1e-2)
@@ -328,7 +328,7 @@ if __name__ == "__main__":
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--mlp_layers", type=int, default=1)
     
-    parser.add_argument("--seed", type=int, default=4321)
+    parser.add_argument("--seed", type=int, default=42)
     
     args = parser.parse_args()
     
