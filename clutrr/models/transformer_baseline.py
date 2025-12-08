@@ -135,6 +135,11 @@ class SoftUnifAttention(nn.Module):
         # Initialize to a positive value so that initially the model allows most interactions (soft mask ~ 1)
         self.type_bias = nn.Parameter(torch.ones(self.num_heads) * 2.0)
 
+        # === New: Post-SDPA Gating ===
+        # Learnable gate for each head output
+        # Shape: [1, num_heads, 1, 1] for broadcasting
+        self.output_gate_params = nn.Parameter(torch.zeros(1, self.num_heads, 1, 1))
+
     def forward(self, x, mask=None, rotary_pos_emb=None, static_x=None):
         batch_size, seq_len, _ = x.size()
 
@@ -215,6 +220,13 @@ class SoftUnifAttention(nn.Module):
         attn_weights = self.dropout(attn_weights)
 
         attn_output = torch.matmul(attn_weights, v)
+        
+        # === New: Apply Post-SDPA Gating ===
+        # gate: [1, num_heads, 1, 1]
+        gate = torch.sigmoid(self.output_gate_params)
+        attn_output = attn_output * gate
+        # ===================================
+
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.hidden_dim)
         output = self.out_proj(attn_output)
         return output
