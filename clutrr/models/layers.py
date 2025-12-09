@@ -3,58 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
-# --- RoPE Implementation ---
-
-class RotaryEmbedding(nn.Module):
-    def __init__(self, dim, max_position_embeddings=2048, base=10000):
-        super().__init__()
-        self.dim = dim
-        self.base = base
-        self.max_position_embeddings = max_position_embeddings
-        # Precompute inverse frequencies
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
-        self.register_buffer("inv_freq", inv_freq)
-        
-        # Cache for cos/sin
-        self._set_cos_sin_cache(max_position_embeddings)
-
-    def _set_cos_sin_cache(self, seq_len):
-        self.max_seq_len_cached = seq_len
-        t = torch.arange(seq_len, device=self.inv_freq.device, dtype=self.inv_freq.dtype)
-        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
-        # Different from complex number implementation, let's use the sin/cos cache approach
-        # freqs: [seq_len, dim/2]
-        # We want [seq_len, dim] where we interleave or concat. 
-        # Standard RoPE usually does pairs. 
-        # Let's use the cat approach: [cos, cos] corresponding to [x1, x2]
-        emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer("cos_cached", emb.cos()[None, None, :, :], persistent=False)
-        self.register_buffer("sin_cached", emb.sin()[None, None, :, :], persistent=False)
-
-    def forward(self, x, seq_len=None):
-        # x: [batch, num_heads, seq_len, head_dim]
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len)
-            
-        return (
-            self.cos_cached[:, :, :seq_len, ...].to(dtype=x.dtype, device=x.device),
-            self.sin_cached[:, :, :seq_len, ...].to(dtype=x.dtype, device=x.device),
-        )
-
-def rotate_half(x):
-    """Rotates half the hidden dims of the input."""
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2 :]
-    return torch.cat((-x2, x1), dim=-1)
-
-def apply_rotary_pos_emb(q, k, cos, sin):
-    # q, k: [batch, num_heads, seq_len, head_dim]
-    # cos, sin: [1, 1, seq_len, head_dim]
-    # Ensure dimensions match for broadcasting
-    # cos/sin are [1, 1, seq_len, head_dim]
-    # q/k are [batch, num_heads, seq_len, head_dim]
-    return (q * cos) + (rotate_half(q) * sin), (k * cos) + (rotate_half(k) * sin)
-
 # --- Attention Modules ---
 
 class VanillaAttention(nn.Module):
@@ -71,7 +19,7 @@ class VanillaAttention(nn.Module):
         self.out_proj = nn.Linear(hidden_dim, hidden_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, mask=None, rotary_pos_emb=None, static_x=None):
+    def forward(self, x, mask=None):
         # x: [batch_size, seq_len, hidden_dim]
         # mask: [batch_size, seq_len] (1 for valid, 0 for padding)
         batch_size, seq_len, _ = x.size()
@@ -79,11 +27,6 @@ class VanillaAttention(nn.Module):
         q = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-
-        # Apply RoPE
-        if rotary_pos_emb is not None:
-            cos, sin = rotary_pos_emb
-            q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
         # Scores: [batch_size, num_heads, seq_len, seq_len]
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
@@ -113,121 +56,88 @@ class SoftUnifAttention(nn.Module):
         self.head_dim = hidden_dim // num_heads
         assert self.head_dim * num_heads == hidden_dim, "hidden_dim must be divisible by num_heads"
 
-        # Split head_dim into value_dim and type_dim
-        self.value_dim = self.head_dim // 2
-        self.type_dim = self.head_dim - self.value_dim
-
+        # --- Value Stream ---
         self.q_proj = nn.Linear(hidden_dim, hidden_dim)
         self.k_proj = nn.Linear(hidden_dim, hidden_dim)
         self.v_proj = nn.Linear(hidden_dim, hidden_dim)
         self.out_proj = nn.Linear(hidden_dim, hidden_dim)
         self.dropout = nn.Dropout(dropout)
 
-        # Learnable bilinear/affine for type unification
-        # We want a score between q_type and k_type.
-        # Let's use a bilinear form: q_type @ W @ k_type^T
-        self.type_bilinear = nn.Parameter(torch.empty(self.num_heads, self.type_dim, self.type_dim))
+        # --- Latent Variable Soft-Unification (LVSU) ---
+        self.num_types = 5 # NOISE, ENT, REL_VERT, REL_HOR, REL_MIX
+        
+        # 1. Type Inference
+        self.type_inferer = nn.Linear(hidden_dim, self.num_types)
+        self.type_embeddings = nn.Embedding(self.num_types, self.head_dim)
+        
+        # 2. Unification Kernel (Independent Projections for Type Stream)
+        self.q_type = nn.Linear(self.head_dim, self.head_dim)
+        self.k_type = nn.Linear(self.head_dim, self.head_dim)
+        
+        # Bilinear Weight for Unification
+        self.type_bilinear = nn.Parameter(torch.empty(self.num_heads, self.head_dim, self.head_dim))
         nn.init.xavier_uniform_(self.type_bilinear)
         
-        # Bias for the type score before sigmoid
-        # Initialize to a positive value so that initially the model allows most interactions (soft mask ~ 1)
-        self.type_bias = nn.Parameter(torch.ones(self.num_heads) * 2.0)
+        # Removed explicit type_bias initialization to 2.0
 
-        # === New: Post-SDPA Gating ===
-        # Learnable gate for each head output
-        # Shape: [1, num_heads, 1, 1] for broadcasting
-        self.output_gate_params = nn.Parameter(torch.zeros(1, self.num_heads, 1, 1))
-
-    def forward(self, x, mask=None, rotary_pos_emb=None, static_x=None):
+    def forward(self, x, mask=None):
         batch_size, seq_len, _ = x.size()
 
-        # Value projections use the dynamic hidden state x
-        q_val_full = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        k_val_full = self.k_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        # === Step A: Value Stream ===
+        q_val = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        k_val = self.k_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        # Type projections use the STATIC embedding static_x if provided, else x
-        # This enforces "Static Type Anchoring"
-        type_input = static_x if static_x is not None else x
-        q_type_full = self.q_proj(type_input).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        k_type_full = self.k_proj(type_input).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        # Standard Scaled Dot Product Attention for Value
+        val_scores = torch.matmul(q_val, k_val.transpose(-2, -1)) / math.sqrt(self.head_dim)
 
-        # Split into value and type
-        # Note: We use the same projection matrices q_proj/k_proj for both, but apply them to different inputs
-        # and then slice. This effectively means we have shared weights but different inputs.
+        # === Step B: Latent Type Inference ===
+        # [B, L, 5]
+        type_logits = self.type_inferer(x)
+        type_probs = F.softmax(type_logits, dim=-1)
         
-        q_val = q_val_full[..., :self.value_dim]
-        k_val = k_val_full[..., :self.value_dim]
+        # Soft Type Vector: [B, L, 5] @ [5, Head_Dim] -> [B, L, Head_Dim]
+        latent_type_vec = torch.matmul(type_probs, self.type_embeddings.weight)
+
+        # === Step C: Unification Stream ===
+        # Project Type Vectors
+        q_type_vec = self.q_type(latent_type_vec) # [B, L, Head_Dim]
+        k_type_vec = self.k_type(latent_type_vec) # [B, L, Head_Dim]
         
-        q_type = q_type_full[..., self.value_dim:]
-        k_type = k_type_full[..., self.value_dim:]
-
-        # Apply RoPE ONLY to value part
-        if rotary_pos_emb is not None:
-            cos, sin = rotary_pos_emb
-            # Note: cos, sin must match value_dim
-            q_val, k_val = apply_rotary_pos_emb(q_val, k_val, cos, sin)
-            # q_type, k_type are NOT rotated -> Position Invariant
-
-        # 1. Value Similarity (Vanilla-like)
-        # [batch_size, num_heads, seq_len, seq_len]
-        val_scores = torch.matmul(q_val, k_val.transpose(-2, -1)) / math.sqrt(self.value_dim)
-
-        # 2. Type Unification
-        # We want to compute q_type @ W @ k_type^T for each head.
-        # q_type: [B, H, L, D_t]
-        # W: [H, D_t, D_t]
-        # k_type: [B, H, L, D_t]
+        # Expand for heads: [B, 1, L, Head_Dim]
+        q_type_vec = q_type_vec.unsqueeze(1)
+        k_type_vec = k_type_vec.unsqueeze(1)
         
-        # q_type @ W
-        # [B, H, L, D] @ [H, D, D] -> [B, H, L, D] (broadcasting over B)
-        # We need to align W to [1, H, D, D]
+        # Bilinear: q @ W @ k.T
         W_expanded = self.type_bilinear.unsqueeze(0) # [1, H, D, D]
-        q_type_transformed = torch.matmul(q_type, W_expanded) # [B, H, L, D]
+        q_type_transformed = torch.matmul(q_type_vec, W_expanded) # [B, H, L, D]
         
-        # Now dot product with k_type
-        # [B, H, L, D] @ [B, H, D, S] -> [B, H, L, S]
-        type_scores_raw = torch.matmul(q_type_transformed, k_type.transpose(-2, -1))
+        # [B, H, L, D] @ [B, 1, D, L] -> [B, H, L, L]
+        unification_logits = torch.matmul(q_type_transformed, k_type_vec.transpose(-2, -1))
         
+        # Scale
+        unification_logits = unification_logits / math.sqrt(self.head_dim)
         
-        # === 【新增：缩放 + Bias】 ===
-        # 1. 缩放：除以 sqrt(d) 以稳定梯度方差
-        type_scores_raw = type_scores_raw / math.sqrt(self.type_dim)
-        
-        # 2. 加 Bias：让初始门控开启
-        # view(1, heads, 1, 1) 用于广播到 batch 和 seq_len
-        type_scores_raw = type_scores_raw + self.type_bias.view(1, self.num_heads, 1, 1)
-        # ============================
+        unification_prob = torch.sigmoid(unification_logits)
 
-        type_unification = torch.sigmoid(type_scores_raw)
-
-        # 3. Combine
-        # Let's interpret type_unification as a soft mask.
-        # If type_unification is 1, we keep val_scores.
-        # If type_unification is 0, we want score to be -inf.
-        # So adding log(type_unification) makes sense.
-        
+        # === Step D: Fusion ===
         epsilon = 1e-6
-        combined_scores = val_scores + torch.log(type_unification + epsilon)
+        combined_scores = val_scores + torch.log(unification_prob + epsilon)
 
         if mask is not None:
             mask_expanded = mask.unsqueeze(1).unsqueeze(2)
             combined_scores = combined_scores.masked_fill(mask_expanded == 0, float('-inf'))
 
+        # === Step E: Output ===
         attn_weights = F.softmax(combined_scores, dim=-1)
         attn_weights = self.dropout(attn_weights)
 
         attn_output = torch.matmul(attn_weights, v)
         
-        # === New: Apply Post-SDPA Gating ===
-        # gate: [1, num_heads, 1, 1]
-        gate = torch.sigmoid(self.output_gate_params)
-        attn_output = attn_output * gate
-        # ===================================
-
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.hidden_dim)
         output = self.out_proj(attn_output)
-        return output
+        
+        return output, type_logits, unification_logits
 
 class MLP(nn.Module):
     def __init__(self, in_dim, embed_dim, out_dim, num_layers=1):
@@ -264,12 +174,18 @@ class TransformerEncoderLayer(nn.Module):
         )
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, mask=None, rotary_pos_emb=None, static_x=None):
+    def forward(self, x, mask=None):
         # Self Attention
-        attn_out = self.attention(x, mask, rotary_pos_emb, static_x)
+        if isinstance(self.attention, SoftUnifAttention):
+            attn_out, type_logits, unify_logits = self.attention(x, mask)
+        else:
+            attn_out = self.attention(x, mask)
+            type_logits, unify_logits = None, None
+            
         x = self.norm1(x + self.dropout(attn_out))
         
         # FFN
         ffn_out = self.ffn(x)
         x = self.norm2(x + ffn_out)
-        return x
+        
+        return x, type_logits, unify_logits

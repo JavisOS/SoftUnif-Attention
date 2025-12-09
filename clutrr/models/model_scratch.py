@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import re
 from transformers import RobertaTokenizerFast
-from .layers import TransformerEncoderLayer, RotaryEmbedding, MLP
+from .layers import TransformerEncoderLayer, MLP
 
 class SmallTransformerEncoder(nn.Module):
     def __init__(self, vocab_size, hidden_dim, num_layers, num_heads, ffn_dim, dropout, max_len=512, attention_type='vanilla'):
@@ -17,16 +17,6 @@ class SmallTransformerEncoder(nn.Module):
         ])
         
         self.norm = nn.LayerNorm(hidden_dim)
-        
-        # Initialize RoPE
-        if attention_type == 'softunif':
-            # SoftUnif splits head_dim in half, only applies RoPE to value part
-            rope_dim = (hidden_dim // num_heads) // 2
-        else:
-            # Vanilla applies RoPE to full head_dim
-            rope_dim = hidden_dim // num_heads
-            
-        self.rotary_emb = RotaryEmbedding(rope_dim, max_position_embeddings=max_len)
 
     def forward(self, input_ids, attention_mask=None):
         seq_len = input_ids.size(1)
@@ -34,19 +24,20 @@ class SmallTransformerEncoder(nn.Module):
         # Raw semantic embeddings (No positional info added here)
         x = self.embedding(input_ids)
         
-        # Capture static embeddings for Type Anchoring
-        static_x = x
-        
         x = self.dropout(x)
         
-        # Get RoPE embeddings
-        cos, sin = self.rotary_emb(x, seq_len=seq_len)
+        all_type_logits = []
+        all_unify_logits = []
         
         for layer in self.layers:
-            x = layer(x, attention_mask, rotary_pos_emb=(cos, sin), static_x=static_x)
+            x, type_logits, unify_logits = layer(x, attention_mask)
+            if type_logits is not None:
+                all_type_logits.append(type_logits)
+            if unify_logits is not None:
+                all_unify_logits.append(unify_logits)
             
         x = self.norm(x)
-        return x
+        return x, all_type_logits, all_unify_logits
 
 class CLUTRRTransformerModel(nn.Module):
     def __init__(self, config):
@@ -77,99 +68,42 @@ class CLUTRRTransformerModel(nn.Module):
             num_layers=config.mlp_layers
         )
 
-    def forward(self, contexts, context_splits, queries):
-        # 1. Preprocess batch into stories
-        # contexts: list of sentences
-        # context_splits: list of (start, end) indices into contexts
-        # queries: list of (sub, obj) tuples
-        
-        story_texts = []
-        
-        # Reconstruct stories and find name indices
-        # We need to be careful to map names to the NEW token indices in the concatenated story.
-        
-        for i, (start, end) in enumerate(context_splits):
-            # Get sentences for this story
-            sentences = contexts[start:end]
-            
-            # Join sentences
-            full_story = " ".join(sentences)
-            story_texts.append(full_story)
-            
-        # Tokenize batch of stories
-        encodings = self.tokenizer(story_texts, padding=True, truncation=True, return_tensors="pt", max_length=512)
-        input_ids = encodings.input_ids.to(self.device)
-        attention_mask = encodings.attention_mask.to(self.device)
+    def forward(self, input_ids, attention_mask, sub_indices, obj_indices):
+        input_ids = input_ids.to(self.device)
+        attention_mask = attention_mask.to(self.device)
         
         # Run Encoder
         # [batch_size, seq_len, hidden_dim]
-        sequence_output = self.encoder(input_ids, attention_mask)
+        sequence_output, all_type_logits, all_unify_logits = self.encoder(input_ids, attention_mask)
         
         # Extract Entities and Story Rep
         batch_features = []
         
-        for i, (sub, obj) in enumerate(queries):
-            # We need to find the token indices for 'sub' and 'obj' in story_texts[i]
-            # Since we tokenized story_texts[i], we can search for the tokens corresponding to the names.
-            
-            story_text = story_texts[i]
-            
-            # Helper to get embedding for a name
-            def get_name_embedding(name):
-                # Find all occurrences of [name]
-                # We need to escape brackets for regex
-                pattern = re.escape(f"[{name}]")
-                matches = list(re.finditer(pattern, story_text))
-                
-                if not matches:
-                    # Fallback: try without brackets if not found (should not happen given dataset)
-                    pattern = re.escape(name)
-                    matches = list(re.finditer(pattern, story_text))
-                
-                if not matches:
-                    # If still not found, return zero vector or global rep (should not happen)
-                    return torch.zeros(self.config.hidden_dim, device=self.device)
-
-                # Collect all token indices for this name
-                token_indices = []
-                for match in matches:
-                    start_char, end_char = match.span()
-                    # char_to_token returns None if char is not in a token (e.g. whitespace)
-                    # We scan the range
-                    for char_idx in range(start_char, end_char):
-                        token_idx = encodings.char_to_token(i, char_idx)
-                        if token_idx is not None:
-                            token_indices.append(token_idx)
-                
-                if not token_indices:
+        for i in range(len(input_ids)):
+            # Helper to get embedding for indices
+            def get_emb(indices):
+                if not indices:
                     return torch.zeros(self.config.hidden_dim, device=self.device)
                 
-                token_indices = list(set(token_indices))
-                # Select embeddings
-                # [num_tokens, hidden_dim]
-                embs = sequence_output[i, token_indices, :]
-                # Pool (mean or max)
-                return torch.mean(embs, dim=0)
-
-            sub_emb = get_name_embedding(sub)
-            obj_emb = get_name_embedding(obj)
+                # Average pooling over tokens
+                # indices is a list of token indices
+                idx_tensor = torch.tensor(indices, device=self.device)
+                embs = sequence_output[i, idx_tensor, :]
+                return embs.mean(dim=0)
             
-            # Global story rep: mean of all tokens (masked)
-            # [seq_len, hidden_dim]
-            seq_emb = sequence_output[i]
-            mask = attention_mask[i].unsqueeze(-1) # [seq_len, 1]
-            # Sum valid tokens
-            sum_emb = (seq_emb * mask).sum(dim=0)
-            count = mask.sum()
-            story_emb = sum_emb / (count + 1e-9)
+            sub_emb = get_emb(sub_indices[i])
+            obj_emb = get_emb(obj_indices[i])
+            
+            # Story embedding: CLS token (index 0)
+            story_emb = sequence_output[i, 0, :]
             
             # Concatenate
-            # [3 * hidden_dim]
-            pair_feature = torch.cat([sub_emb, obj_emb, story_emb], dim=0)
-            batch_features.append(pair_feature)
+            features = torch.cat([sub_emb, obj_emb, story_emb], dim=0)
+            batch_features.append(features)
             
         batch_features = torch.stack(batch_features)
         
-        # Classification
+        # Classifier
         logits = self.relation_classifier(batch_features)
-        return logits
+        
+        return logits, all_type_logits, all_unify_logits, attention_mask

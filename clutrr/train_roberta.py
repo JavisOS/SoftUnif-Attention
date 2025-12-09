@@ -113,7 +113,7 @@ def train(args):
             best_acc = test_acc
             save_dir = os.path.join(script_dir, "../model/clutrr")
             os.makedirs(save_dir, exist_ok=True)
-            save_path = os.path.join(save_dir, f"clutrr_dropin_{args.model_type}_best.pth")
+            save_path = os.path.join(save_dir, f"clutrr_{args.model_type}_best.pth")
             torch.save(model.state_dict(), save_path)
             print(f"Saved best model to {save_path}")
 

@@ -68,22 +68,69 @@ def train(args):
         total = 0
         
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.epochs}")
-        for (contexts, queries, context_splits), answers in pbar:
+        for (input_ids, attention_mask, type_labels, unify_mat, sub_indices, obj_indices), answers in pbar:
             answers = answers.to(device)
+            type_labels = type_labels.to(device)
+            unify_mat = unify_mat.to(device)
             
             optimizer.zero_grad()
-            logits = model(contexts, context_splits, queries)
+            task_logits, all_type_logits, all_unify_logits, attention_mask = model(input_ids, attention_mask, sub_indices, obj_indices)
             
-            loss = criterion(logits, answers)
+            # Task Loss
+            task_loss = criterion(task_logits, answers)
+            
+            # Auxiliary Losses
+            total_type_loss = 0
+            total_unify_loss = 0
+            
+            if args.attention_type == "softunif":
+                # Type Loss
+                for layer_logits in all_type_logits:
+                    # layer_logits: [B, L, 5] -> Flatten: [B*L, 5]
+                    # type_labels: [B, L] -> Flatten: [B*L]
+                    # Note: We treat padding (0) as NOISE (0), which is acceptable.
+                    total_type_loss += nn.CrossEntropyLoss()(layer_logits.view(-1, 5), type_labels.view(-1))
+                
+                # Unify Loss
+                # Broadcast unify_mat to [B, 1, L, L] to match heads [B, H, L, L]
+                unify_target = unify_mat.unsqueeze(1) 
+                
+                # Create Mask for Unification Loss
+                # attention_mask: [B, L] -> [B, 1, L, 1] * [B, 1, 1, L] -> [B, 1, L, L]
+                active_loss_mask = attention_mask.unsqueeze(1).unsqueeze(2) * attention_mask.unsqueeze(1).unsqueeze(3)
+                
+                for layer_logits in all_unify_logits:
+                    # layer_logits: [B, H, L, L]
+                    H = layer_logits.size(1)
+                    target = unify_target.expand(-1, H, -1, -1)
+                    
+                    # Calculate BCE Loss with Masking
+                    loss_fct = nn.BCEWithLogitsLoss(reduction='none')
+                    loss = loss_fct(layer_logits, target)
+                    
+                    # Expand mask to heads
+                    mask = active_loss_mask.expand(-1, H, -1, -1)
+                    
+                    masked_loss = (loss * mask).sum() / (mask.sum() + 1e-9)
+                    total_unify_loss += masked_loss
+
+            loss = task_loss + args.lambda_type * total_type_loss + args.lambda_unify * total_unify_loss
+            
             loss.backward()
             optimizer.step()
             
             total_loss += loss.item()
-            preds = torch.argmax(logits, dim=1)
+            preds = torch.argmax(task_logits, dim=1)
             correct += (preds == answers).sum().item()
             total += answers.size(0)
             
-            pbar.set_postfix({'loss': total_loss / (total/args.batch_size + 1e-9), 'acc': correct / total})
+            pbar.set_postfix({
+                'loss': total_loss / (total/args.batch_size + 1e-9), 
+                'acc': correct / total,
+                'task': f"{task_loss.item():.2f}",
+                'type': f"{total_type_loss.item() if isinstance(total_type_loss, torch.Tensor) else 0:.2f}",
+                'unif': f"{total_unify_loss.item() if isinstance(total_unify_loss, torch.Tensor) else 0:.2f}"
+            })
 
         train_acc = correct / total
         print(f"Epoch {epoch+1} Train Loss: {total_loss/len(train_loader):.4f} Train Acc: {train_acc:.4f}")
@@ -94,10 +141,10 @@ def train(args):
         test_total = 0
         
         with torch.no_grad():
-            for (contexts, queries, context_splits), answers in test_loader:
+            for (input_ids, attention_mask, _, _, sub_indices, obj_indices), answers in test_loader:
                 answers = answers.to(device)
-                logits = model(contexts, context_splits, queries)
-                preds = torch.argmax(logits, dim=1)
+                task_logits, _, _, _ = model(input_ids, attention_mask, sub_indices, obj_indices)
+                preds = torch.argmax(task_logits, dim=1)
                 test_correct += (preds == answers).sum().item()
                 test_total += answers.size(0)
         
@@ -116,8 +163,8 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--dataset", type=str, default="data_db9b8f04", help="Dataset folder name")
     parser.add_argument("--data_percentage", type=int, default=100)
-    parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=1e-2)
     
@@ -131,6 +178,10 @@ if __name__ == "__main__":
     
     # Attention Type
     parser.add_argument("--attention_type", type=str, default="vanilla", choices=["vanilla", "softunif"])
+    
+    # Auxiliary Loss Weights
+    parser.add_argument("--lambda_type", type=float, default=0.5, help="Weight for Type Classification Loss")
+    parser.add_argument("--lambda_unify", type=float, default=0.1, help="Weight for Unification Loss")
     
     args = parser.parse_args()
     train(args)
