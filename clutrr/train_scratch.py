@@ -1,6 +1,4 @@
 import os
-import csv
-import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -9,79 +7,16 @@ from argparse import ArgumentParser
 from tqdm import tqdm
 import numpy as np
 import random
-
 import sys
-import os
 
-# Add the current directory to sys.path to allow imports
+# Add the parent directory to sys.path to allow imports from clutrr package
 current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
 
-# Import the model
-from models.transformer_baseline import CLUTRRTransformerModel
-
-# Define relation map (copied from run_with_constraints.py)
-relation_id_map = {
-  'daughter': 0,
-  'sister': 1,
-  'son': 2,
-  'aunt': 3,
-  'father': 4,
-  'husband': 5,
-  'granddaughter': 6,
-  'brother': 7,
-  'nephew': 8,
-  'mother': 9,
-  'uncle': 10,
-  'grandfather': 11,
-  'wife': 12,
-  'grandmother': 13,
-  'niece': 14,
-  'grandson': 15,
-  'son-in-law': 16,
-  'father-in-law': 17,
-  'daughter-in-law': 18,
-  'mother-in-law': 19,
-  'nothing': 20,
-}
-
-class CLUTRRDataset:
-  def __init__(self, root, dataset, split, data_percentage):
-    self.dataset_dir = os.path.join(root, f"{dataset}/")
-    # Filter files based on split
-    self.file_names = [os.path.join(self.dataset_dir, d) for d in os.listdir(self.dataset_dir) if f"_{split}.csv" in d]
-    self.data = [row for f in self.file_names for row in list(csv.reader(open(f)))[1:]]
-    self.data_num = math.floor(len(self.data) * data_percentage / 100)
-    self.data = self.data[:self.data_num]
-
-  def __len__(self):
-    return len(self.data)
-
-  def __getitem__(self, i):
-    # Context is a list of sentences
-    context = [s.strip().lower() for s in self.data[i][2].split(".") if s.strip() != ""]
-
-    # Query is of type (sub, obj)
-    query_sub_obj = eval(self.data[i][3])
-    query = (query_sub_obj[0].lower(), query_sub_obj[1].lower())
-
-    # Answer is one of 20 classes
-    answer = self.data[i][5]
-    
-    # Also return the file name or k (length) for analysis if possible
-    # The file name is not easily accessible per row here without storing it.
-    # But we can infer k from the file name if we structured it differently.
-    # For now, let's just return what the original did.
-    return ((context, query), answer)
-
-  @staticmethod
-  def collate_fn(batch):
-    queries = [query for ((_, query), _) in batch]
-    contexts = [fact for ((context, _), _) in batch for fact in context]
-    context_lens = [len(context) for ((context, _), _) in batch]
-    context_splits = [(sum(context_lens[:i]), sum(context_lens[:i + 1])) for i in range(len(context_lens))]
-    answers = torch.stack([torch.tensor(relation_id_map[answer]) for (_, answer) in batch])
-    return ((contexts, queries, context_splits), answers)
+# Import from new structure
+from clutrr.data.dataset import CLUTRRDataset, relation_id_map
+from clutrr.models.model_scratch import CLUTRRTransformerModel
 
 def train(args):
     # Set device
@@ -95,7 +30,7 @@ def train(args):
     # Load Data
     # Use absolute path relative to this script to be safe
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    root = os.path.join(script_dir, "../data")
+    root = os.path.join(script_dir, "../data/clutrr")
     
     train_dataset = CLUTRRDataset(root, args.dataset, "train", args.data_percentage)
     test_dataset = CLUTRRDataset(root, args.dataset, "test", 100)
@@ -171,8 +106,11 @@ def train(args):
         
         if test_acc > best_acc:
             best_acc = test_acc
-            torch.save(model.state_dict(), f"clutrr_transformer_{args.attention_type}_best.pth")
-            print("Saved best model.")
+            save_dir = os.path.join(script_dir, "../model/clutrr")
+            os.makedirs(save_dir, exist_ok=True)
+            save_path = os.path.join(save_dir, f"clutrr_transformer_{args.attention_type}_best.pth")
+            torch.save(model.state_dict(), save_path)
+            print(f"Saved best model to {save_path}")
 
 if __name__ == "__main__":
     parser = ArgumentParser()
