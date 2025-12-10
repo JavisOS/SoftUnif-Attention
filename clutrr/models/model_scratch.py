@@ -1,14 +1,21 @@
 import torch
 import torch.nn as nn
-import re
 from transformers import RobertaTokenizerFast
 from .layers import TransformerEncoderLayer, MLP
 
 class SmallTransformerEncoder(nn.Module):
-    def __init__(self, vocab_size, hidden_dim, num_layers, num_heads, ffn_dim, dropout, max_len=512, attention_type='vanilla'):
+    def __init__(self, vocab_size, hidden_dim, num_layers, num_heads, ffn_dim, dropout,
+                 max_len=512, attention_type='vanilla'):
         super().__init__()
+        self.hidden_dim = hidden_dim
+        self.max_len = max_len
+
+        # Token embedding
         self.embedding = nn.Embedding(vocab_size, hidden_dim)
-        # Absolute positional embedding is intentionally removed to prevent leakage into Type subspace
+
+        # Learnable positional embedding（恢复顺序信息）
+        self.pos_embedding = nn.Embedding(max_len, hidden_dim)
+
         self.dropout = nn.Dropout(dropout)
         
         self.layers = nn.ModuleList([
@@ -19,11 +26,20 @@ class SmallTransformerEncoder(nn.Module):
         self.norm = nn.LayerNorm(hidden_dim)
 
     def forward(self, input_ids, attention_mask=None):
-        seq_len = input_ids.size(1)
-        
-        # Raw semantic embeddings (No positional info added here)
-        x = self.embedding(input_ids)
-        
+        """
+        input_ids: [B, L]
+        attention_mask: [B, L]
+        """
+        batch_size, seq_len = input_ids.size()
+        if seq_len > self.max_len:
+            raise ValueError(f"Sequence length {seq_len} exceeds max_len {self.max_len}")
+
+        # Token + Position embeddings
+        token_emb = self.embedding(input_ids)                              # [B, L, D]
+        positions = torch.arange(seq_len, device=input_ids.device).unsqueeze(0).expand(batch_size, -1)
+        pos_emb = self.pos_embedding(positions)                            # [B, L, D]
+
+        x = token_emb + pos_emb
         x = self.dropout(x)
         
         all_type_logits = []
@@ -84,9 +100,6 @@ class CLUTRRTransformerModel(nn.Module):
             def get_emb(indices):
                 if not indices:
                     return torch.zeros(self.config.hidden_dim, device=self.device)
-                
-                # Average pooling over tokens
-                # indices is a list of token indices
                 idx_tensor = torch.tensor(indices, device=self.device)
                 embs = sequence_output[i, idx_tensor, :]
                 return embs.mean(dim=0)

@@ -50,19 +50,20 @@ def preprocess_item(row):
     global worker_tokenizer
     
     # Query is of type (sub, obj)
+    # NOTE: keep original casing so it matches entity_to_tokens keys
     query_sub_obj = eval(row[3])
-    query = (query_sub_obj[0].lower(), query_sub_obj[1].lower())
+    query = (query_sub_obj[0], query_sub_obj[1])
 
     # Answer is one of 20 classes
     answer = row[5]
     
     # Graph Parsing for Supervision
     processed = process_clutrr_row(row[2], worker_tokenizer)
-    input_ids = processed['input_ids'].squeeze(0) # [Seq]
-    attention_mask = processed['attention_mask'].squeeze(0) # [Seq]
-    type_labels = processed['type_labels']
-    unification_matrix = processed['unification_matrix']
-    entity_to_tokens = processed['entity_to_tokens']
+    input_ids = processed['input_ids'].squeeze(0)        # [Seq]
+    attention_mask = processed['attention_mask'].squeeze(0)  # [Seq]
+    type_labels = processed['type_labels']               # [Seq]
+    unification_matrix = processed['unification_matrix'] # [Seq, Seq]
+    entity_to_tokens = processed['entity_to_tokens']     # dict[name -> [idx]]
     
     # Get token indices for query subject and object
     sub, obj = query
@@ -91,18 +92,18 @@ class CLUTRRDataset(Dataset):
     cache_file = os.path.join(cache_dir, f"cached_{dataset}_{split}_{data_percentage}.pt")
     
     if os.path.exists(cache_file):
-        print(f"Loading cached {split} dataset from {cache_file}...")
+        print(f"Loading cached {split} dataset from {cache_file}.")
         self.processed_data = torch.load(cache_file)
     else:
         # Pre-process data
         self.processed_data = []
-        num_workers = min(multiprocessing.cpu_count(), 8) # Cap at 8 to avoid TLS exhaustion
-        print(f"Pre-processing {dataset} {split} dataset with {num_workers} workers...")
+        num_workers = min(multiprocessing.cpu_count(), 4) # Cap at 8 to avoid TLS exhaustion
+        print(f"Pre-processing {dataset} {split} dataset with {num_workers} workers.")
         
         with multiprocessing.Pool(processes=num_workers, initializer=init_worker) as pool:
             self.processed_data = list(tqdm(pool.imap(preprocess_item, self.data), total=len(self.data)))
         
-        print(f"Saving cached {split} dataset to {cache_file}...")
+        print(f"Saving cached {split} dataset to {cache_file}.")
         torch.save(self.processed_data, cache_file)
 
   def __len__(self):
@@ -128,16 +129,15 @@ class CLUTRRDataset(Dataset):
     type_labels_batch = pad_sequence(type_labels_list, batch_first=True, padding_value=0)
     
     # Batch Unification Matrices
-    unify_mats_list = [item[0][3] for item in batch]
-    max_len = max([m.size(0) for m in unify_mats_list])
-    unify_mat_batch = torch.zeros(len(batch), max_len, max_len)
+    unify_list = [item[0][3] for item in batch] # each [L_i, L_i]
+    max_len = max(u.size(0) for u in unify_list)
+    unify_batch = torch.zeros(len(batch), max_len, max_len)
+    for i, u in enumerate(unify_list):
+        L = u.size(0)
+        unify_batch[i, :L, :L] = u
     
-    for i, m in enumerate(unify_mats_list):
-        l = m.size(0)
-        unify_mat_batch[i, :l, :l] = m
-        
-    # Batch Query Indices (List of Lists)
+    # Batch subject / object indices (as Python lists, kept as is)
     sub_indices = [item[0][4] for item in batch]
     obj_indices = [item[0][5] for item in batch]
-        
-    return ((input_ids_batch, mask_batch, type_labels_batch, unify_mat_batch, sub_indices, obj_indices), answers)
+    
+    return (input_ids_batch, mask_batch, type_labels_batch, unify_batch, sub_indices, obj_indices), answers
