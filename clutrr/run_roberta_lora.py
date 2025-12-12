@@ -8,6 +8,8 @@ from torch.utils.data import DataLoader, Dataset
 from argparse import ArgumentParser
 from tqdm import tqdm
 from transformers import RobertaTokenizer, RobertaForSequenceClassification, RobertaConfig
+from models.roberta_softunif import convert_roberta_to_softunif
+from models.lora import apply_lora_to_roberta
 
 # Define relation map
 relation_id_map = {
@@ -33,61 +35,6 @@ relation_id_map = {
   'mother-in-law': 19,
   'nothing': 20,
 }
-
-class LoRALinear(nn.Module):
-    def __init__(self, original_layer, rank=8, alpha=16, dropout=0.1):
-        super().__init__()
-        self.original_layer = original_layer
-        self.rank = rank
-        self.alpha = alpha
-        self.scaling = alpha / rank
-        
-        self.lora_dropout = nn.Dropout(dropout)
-        self.lora_A = nn.Parameter(torch.zeros(rank, original_layer.in_features))
-        self.lora_B = nn.Parameter(torch.zeros(original_layer.out_features, rank))
-        
-        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-        nn.init.zeros_(self.lora_B)
-        
-    def forward(self, x):
-        original_out = self.original_layer(x)
-        lora_out = (self.lora_dropout(x) @ self.lora_A.T @ self.lora_B.T) * self.scaling
-        return original_out + lora_out
-
-def apply_lora_to_roberta(model, rank, alpha, dropout):
-    # Freeze the entire model first
-    for param in model.parameters():
-        param.requires_grad = False
-        
-    # Apply LoRA to Attention layers (Query and Value)
-    # RoBERTa structure: roberta.encoder.layer.X.attention.self.query/key/value
-    
-    for name, module in model.named_modules():
-        if "attention.self.query" in name or "attention.self.value" in name:
-            if isinstance(module, nn.Linear):
-                # We need to replace the module in the parent
-                # But named_modules() returns the module, not the parent.
-                # So we need a different approach or iterate and replace.
-                pass
-
-    # Better approach: iterate over layers
-    for layer in model.roberta.encoder.layer:
-        # Query
-        layer.attention.self.query = LoRALinear(layer.attention.self.query, rank, alpha, dropout)
-        # Value
-        layer.attention.self.value = LoRALinear(layer.attention.self.value, rank, alpha, dropout)
-        
-    # Also unfreeze the classifier head if we want to train it?
-    # Usually for classification, we want to train the head.
-    for param in model.classifier.parameters():
-        param.requires_grad = True
-
-    # Count trainable params
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    all_params = sum(p.numel() for p in model.parameters())
-    print(f"LoRA Applied. Trainable params: {trainable_params} / {all_params} ({100 * trainable_params / all_params:.2f}%)")
-    
-    return model
 
 class CLUTRRRobertaDataset(Dataset):
     def __init__(self, root, dataset, split, data_percentage, tokenizer, max_length=256):
@@ -141,6 +88,9 @@ def train(args):
     tokenizer = RobertaTokenizer.from_pretrained(roberta_path)
     config = RobertaConfig.from_pretrained(roberta_path, num_labels=len(relation_id_map))
     model = RobertaForSequenceClassification.from_pretrained(roberta_path, config=config)
+
+    if args.attention_type == "softunif":
+        model = convert_roberta_to_softunif(model, config)
 
     if args.use_lora:
         print(f"Applying LoRA with rank={args.lora_rank}, alpha={args.lora_alpha}, dropout={args.lora_dropout}")
@@ -232,6 +182,9 @@ if __name__ == "__main__":
     parser.add_argument("--lora_rank", type=int, default=8, help="LoRA rank")
     parser.add_argument("--lora_alpha", type=int, default=16, help="LoRA alpha")
     parser.add_argument("--lora_dropout", type=float, default=0.1, help="LoRA dropout")
+    
+    # Attention Type
+    parser.add_argument("--attention_type", type=str, default="vanilla", choices=["vanilla", "softunif"], help="Attention mechanism to use")
 
     args = parser.parse_args()
     train(args)
