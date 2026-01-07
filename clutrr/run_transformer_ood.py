@@ -98,18 +98,30 @@ class CLUTRRDataset(Dataset):
         # print(f"Error parsing graph: {e}") 
         pass
 
-    return ((context, query), answer, ground_truth_relations)
+    # 【新增】解析 Gender Map
+    genders_str = self.data[i][14]
+    gender_map = {}
+    if genders_str:
+        genders_str = genders_str.replace('"', '').replace("'", "")
+        parts = genders_str.split(",")
+        for p in parts:
+            if ":" in p:
+                name, g = p.split(":")
+                gender_map[name.strip().lower()] = g.strip().lower()
+
+    return ((context, query, gender_map), answer, ground_truth_relations)
 
   @staticmethod
   def collate_fn(batch):
-    queries = [query for ((_, query), _, _) in batch]
-    contexts = [fact for ((context, _), _, _) in batch for fact in context]
-    context_lens = [len(context) for ((context, _), _, _) in batch]
+    queries = [query for ((_, query, _), _, _) in batch]
+    gender_maps = [g_map for ((_, _, g_map), _, _) in batch]
+    contexts = [fact for ((context, _, _), _, _) in batch for fact in context]
+    context_lens = [len(context) for ((context, _, _), _, _) in batch]
     context_splits = [(sum(context_lens[:i]), sum(context_lens[:i + 1])) for i in range(len(context_lens))]
     answers = torch.stack([torch.tensor(relation_id_map[answer]) for (_, answer, _) in batch])
     ground_truth_relations = [gt for (_, _, gt) in batch]
     
-    return ((contexts, queries, context_splits), answers, ground_truth_relations)
+    return ((contexts, queries, context_splits, gender_maps), answers, ground_truth_relations)
 
 def clutrr_loader(root, dataset, batch_size, training_data_percentage):
     train_dataset = CLUTRRDataset(root, dataset, "train", training_data_percentage)
@@ -124,7 +136,7 @@ def clutrr_loader(root, dataset, batch_size, training_data_percentage):
 # ==========================================
 
 class UniversalReasoningLayer(nn.Module):
-    """通用推理层：将被递归调用的 Transformer Encoder Layer"""
+    """通用推理层：将被递归调用的 Transformer Encoder Layer (with Gated Residual)"""
     def __init__(self, embed_dim, num_heads=4, dropout=0.1):
         super().__init__()
         self.attn = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True, dropout=dropout)
@@ -136,6 +148,8 @@ class UniversalReasoningLayer(nn.Module):
             nn.Dropout(dropout)
         )
         self.norm2 = nn.LayerNorm(embed_dim)
+        # 【新增】门控参数
+        self.gate_fc = nn.Linear(embed_dim * 2, embed_dim)
 
     def forward(self, x, attn_bias=None):
         # 将 attn_bias 展平以匹配 PyTorch 接口: (Batch * Num_Heads, L, S)
@@ -143,11 +157,21 @@ class UniversalReasoningLayer(nn.Module):
             B, H, L, S = attn_bias.shape
             attn_bias = attn_bias.reshape(B * H, L, S)
 
+        residual = x # 保留上一层的状态
+        
+        # Standard Transformer Block
         attn_out, _ = self.attn(x, x, x, attn_mask=attn_bias, need_weights=False)
         x = self.norm1(x + attn_out)
         ffn_out = self.ffn(x)
-        x = self.norm2(x + ffn_out)
-        return x
+        new_state = self.norm2(x + ffn_out)
+        
+        # 【新增】Gated Residual Connection
+        # z = sigmoid(W * [old, new])
+        z = torch.sigmoid(self.gate_fc(torch.cat([residual, new_state], dim=-1)))
+        
+        # output = (1-z) * old + z * new
+        output = (1 - z) * residual + z * new_state
+        return output
 
 class CLUTRRTransformerOOD(nn.Module):
     def __init__(self, device="cpu", no_fine_tune_roberta=False, steps_train=2, steps_test=8):
@@ -160,6 +184,11 @@ class CLUTRRTransformerOOD(nn.Module):
         self.tokenizer = RobertaTokenizer.from_pretrained("roberta-base", add_prefix_space=True)
         self.roberta = RobertaModel.from_pretrained("roberta-base")
         self.embed_dim = self.roberta.config.hidden_size
+        
+        # 【新增】Gender Embedding
+        # 0: male, 1: female, 2: unknown
+        self.gender_embedding = nn.Embedding(3, self.embed_dim)
+        nn.init.xavier_uniform_(self.gender_embedding.weight)
         
         if no_fine_tune_roberta:
             for param in self.roberta.parameters():
@@ -188,7 +217,7 @@ class CLUTRRTransformerOOD(nn.Module):
         bias = dist.unsqueeze(1) * self.alibi_slopes.view(1, self.n_heads, 1, 1) * -0.1 
         return bias
 
-    def _get_entity_embeddings(self, contexts, context_splits):
+    def _get_entity_embeddings(self, contexts, context_splits, gender_maps):
         """
         完整复刻原 run_with_constraints.py 中的 _preprocess_contexts 逻辑。
         通过 [Name] 标记精确定位人名对应的 Token，并进行 Pooling。
@@ -272,9 +301,12 @@ class CLUTRRTransformerOOD(nn.Module):
         batch_pos = []
         batch_names = []
 
-        for (start, end) in story_ranges:
+        batch_genders = []
+
+        for i_story, (start, end) in enumerate(story_ranges):
             name_to_emb_list = {}
             name_to_pos_list = {}
+            gender_dict_for_story = gender_maps[i_story]
             
             # 遍历该 Story 的所有 Merged Sentences
             for i in range(start, end):
@@ -303,28 +335,38 @@ class CLUTRRTransformerOOD(nn.Module):
             unique_names = sorted(name_to_emb_list.keys())
             curr_embs = []
             curr_pos = []
+            curr_gender_ids = []
             
             for name in unique_names:
                 curr_embs.append(torch.stack(name_to_emb_list[name]).mean(dim=0))
                 curr_pos.append(sum(name_to_pos_list[name]) / len(name_to_pos_list[name]))
+                
+                # Resolve Gender
+                g_str = gender_dict_for_story.get(name.lower(), 'unknown')
+                if g_str == 'male': g_id = 0
+                elif g_str == 'female': g_id = 1
+                else: g_id = 2
+                curr_gender_ids.append(g_id)
             
             # 异常处理 (空 Story)
             if not curr_embs:
                 curr_embs = [torch.zeros(self.embed_dim, device=self.device)]
                 curr_pos = [0.0]
+                curr_gender_ids = [2]
                 unique_names = ["UNK"]
 
             batch_embs.append(torch.stack(curr_embs))
             batch_pos.append(torch.tensor(curr_pos, device=self.device))
             batch_names.append(unique_names)
+            batch_genders.append(torch.tensor(curr_gender_ids, device=self.device))
             
-        return batch_embs, batch_pos, batch_names
+        return batch_embs, batch_pos, batch_names, batch_genders
 
     def forward(self, x, phase='train'):
-        (contexts, queries, context_splits) = x
+        (contexts, queries, context_splits, gender_maps) = x
         
-        # 1. 提取实体特征 (完整版)
-        entity_embs_list, entity_pos_list, entity_names_list = self._get_entity_embeddings(contexts, context_splits)
+        # 1. 提取实体特征 (完整版 + Gender)
+        entity_embs_list, entity_pos_list, entity_names_list, entity_gender_list = self._get_entity_embeddings(contexts, context_splits, gender_maps)
         
         # Pad 到最大实体数
         max_len = max([e.shape[0] for e in entity_embs_list])
@@ -332,13 +374,18 @@ class CLUTRRTransformerOOD(nn.Module):
         
         padded_embs = torch.zeros(B, max_len, self.embed_dim, device=self.device)
         padded_pos = torch.zeros(B, max_len, device=self.device)
+        padded_genders = torch.full((B, max_len), 2, dtype=torch.long, device=self.device)
         pad_mask = torch.ones(B, max_len, device=self.device).bool() 
         
-        for i, (embs, pos) in enumerate(zip(entity_embs_list, entity_pos_list)):
+        for i, (embs, pos, g_ids) in enumerate(zip(entity_embs_list, entity_pos_list, entity_gender_list)):
             L = embs.shape[0]
             padded_embs[i, :L, :] = embs
             padded_pos[i, :L] = pos
+            padded_genders[i, :L] = g_ids
             pad_mask[i, :L] = False
+            
+        # Add Gender Embedding
+        padded_embs = padded_embs + 2 * self.gender_embedding(padded_genders)
             
         # 2. ALiBi Bias
         attn_bias = self._compute_alibi_bias(padded_pos)
@@ -398,30 +445,75 @@ class Trainer:
     self.max_accu = 0
 
   def compute_loss(self, y_pred, y_target, cot_targets):
-    # 主任务 Loss
-    final_logits = y_pred["final_logits"]
-    main_loss = F.cross_entropy(final_logits, y_target.to(self.device))
-    
-    # CoT Loss
-    aux_loss = 0.0
-    step_logits_list = y_pred["all_step_logits"]
-    entity_names_list = y_pred["entity_names"]
-    num_valid_edges = 0
-    last_step_logits = step_logits_list[-1] 
-    
-    for i, gt_relations in enumerate(cot_targets):
-        names = entity_names_list[i]
-        name2idx = {name: idx for idx, name in enumerate(names)}
-        for (u, v, r_id) in gt_relations:
-            if u in name2idx and v in name2idx:
-                u_idx, v_idx = name2idx[u], name2idx[v]
-                pred = last_step_logits[i, u_idx, v_idx, :].unsqueeze(0)
-                target = torch.tensor([r_id], device=self.device)
-                aux_loss += F.cross_entropy(pred, target)
-                num_valid_edges += 1
-                
-    if num_valid_edges > 0: aux_loss = aux_loss / num_valid_edges
-    return main_loss + 0.5 * aux_loss
+      # 1. 主任务 Loss (模型最终输出的 Query 结果)
+      final_logits = y_pred["final_logits"]
+      main_loss = F.cross_entropy(final_logits, y_target.to(self.device))
+      
+      # 获取中间层数据
+      step_logits_list = y_pred["all_step_logits"]
+      entity_names_list = y_pred["entity_names"]
+      last_step_logits = step_logits_list[-1] 
+      
+      pos_logits, pos_targets = [], []
+      neg_logits, neg_targets = [], []
+      query_logits, query_targets = [], []
+
+      # 获取 Query 的名字 (用于特殊监督)
+      # 注意：这里假设 Trainer 能访问到当前 batch 的 queries 文本
+      # 如果不能直接访问，建议从 y_pred 或 x_data 中传递
+      batch_queries = y_pred.get("queries", []) 
+
+      for i, gt_relations in enumerate(cot_targets):
+          names = entity_names_list[i]
+          name2idx = {name: idx for idx, name in enumerate(names)}
+          existing_edges = set()
+          
+          # A. 收集正样本 (Positive Edges)
+          for (u, v, r_id) in gt_relations:
+              if u in name2idx and v in name2idx:
+                  u_idx, v_idx = name2idx[u], name2idx[v]
+                  existing_edges.add((u_idx, v_idx))
+                  pos_logits.append(last_step_logits[i, u_idx, v_idx])
+                  pos_targets.append(r_id)
+
+          # B. 收集负样本 (Negative Edges) - 稀疏采样
+          num_ent = len(names)
+          nothing_candidates = []
+          for idx1 in range(num_ent):
+              for idx2 in range(num_ent):
+                  if idx1 != idx2 and (idx1, idx2) not in existing_edges:
+                      nothing_candidates.append((idx1, idx2))
+          
+          if nothing_candidates:
+              # 采样数量：正样本数的 2 倍，且至少 5 个
+              sample_size = min(len(nothing_candidates), max(5, len(existing_edges) * 2))
+              # 使用随机索引
+              indices = np.random.choice(len(nothing_candidates), size=sample_size, replace=False)
+              for idx in indices:
+                  u_idx, v_idx = nothing_candidates[idx]
+                  neg_logits.append(last_step_logits[i, u_idx, v_idx])
+                  neg_targets.append(20) # nothing ID
+
+      # 汇总计算辅助 Loss
+      aux_loss = 0.0
+      
+      # 正样本 Loss (权重较大)
+      if pos_logits:
+          pos_loss = F.cross_entropy(torch.stack(pos_logits), 
+                                  torch.tensor(pos_targets, device=self.device))
+          aux_loss += pos_loss
+          
+      # 负样本 Loss (防止模型“话多”，权重较小)
+      if neg_logits:
+          neg_loss = F.cross_entropy(torch.stack(neg_logits), 
+                                  torch.tensor(neg_targets, device=self.device))
+          aux_loss += 0.1 * neg_loss # 0.1 是消减系数
+
+      # 返回总 Loss
+      # 0.5 是平衡感知(RoBERTa)和推理(Transformer)的经验权重
+      return main_loss + 0.5 * aux_loss
+      
+      return main_loss + 0.5 * aux_loss
 
   def train(self, num_epochs):
     for i in range(1, num_epochs + 1):
