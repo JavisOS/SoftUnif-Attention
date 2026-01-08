@@ -10,7 +10,7 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 import seaborn as sns
 from torch.utils.data import DataLoader, Dataset
-from transformers import RobertaModel, RobertaTokenizer
+from transformers import RobertaModel, RobertaTokenizer, RobertaTokenizerFast
 from tqdm import tqdm
 
 # ==========================================
@@ -115,7 +115,13 @@ class CLUTRRBaseline(nn.Module):
     def __init__(self, device):
         super().__init__()
         self.device = device
-        self.tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
+        # Use Fast tokenizer for offset mapping support
+        try:
+            self.tokenizer = RobertaTokenizerFast.from_pretrained("roberta-base")
+        except:
+            print("Warning: RobertaTokenizerFast not found, falling back to slow tokenizer (no offsets).")
+            self.tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
+            
         # output_attentions=True for visualization
         self.roberta = RobertaModel.from_pretrained("roberta-base", output_attentions=True)
         self.hidden_size = self.roberta.config.hidden_size
