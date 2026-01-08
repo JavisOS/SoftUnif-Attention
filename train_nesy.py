@@ -312,7 +312,7 @@ class NeSyRoBERTa(nn.Module):
 # 3. Training Loop
 # ==========================================
 def run_training():
-    set_seed(43)
+    set_seed(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     
@@ -356,7 +356,7 @@ def run_training():
             
             optimizer.zero_grad()
             # lambda1 (NextHop) = 1.0, lambda_cons (Consistency) = 5.0
-            out = model(batch, lambda1=0, lambda_cons=5.0) 
+            out = model(batch, lambda1=1, lambda_cons=5.0) 
             
             loss = out['loss']
             loss.backward()
@@ -376,98 +376,35 @@ def run_training():
         print(f"Epoch {epoch+1} Done. Loss: {avg_loss:.4f} (Aux: {accum_aux/len(train_loader):.4f}, Cons: {accum_cons/len(train_loader):.4f})")
         
         # 4. Evaluation
-        print(f"--> Evaluating Epoch {epoch+1}...")
-        metrics = evaluate_detailed(model, test_loader, device)
+        print(f"--> Evaluating Robustness Epoch {epoch+1}...")
+        metrics = evaluate_robustness(model, test_loader, device)
         
-        print(f"  Overall Acc: {metrics['overall']:.4f}")
-        print(f"  Short Hop (2-3): {metrics['short_hop']:.4f}")
-        print(f"  Long Hop (>=6):  {metrics['long_hop']:.4f}")
-        
-        consistency = run_consistency_check(model, test_ds, device, sample_limit=200)
-        print(f"  Bijective Consistency: {consistency:.4f}")
-        
-        # wandb.log({
-        #     "epoch": epoch+1,
-        #     "train_loss": avg_loss,
-        #     "val_acc": metrics['overall'],
-        #     "val_long_hop": metrics['long_hop'],
-        #     "consistency": consistency
-        # })
+        print(f"  Overall Acc (Base):   {metrics['overall']:.4f}")
+        print(f"  Renamed Acc (Mod):    {metrics['renamed']:.4f}")
+        print(f"  Consistency:          {metrics['consistency']:.4f}")
+        print(f"  Consistent & Correct: {metrics['consistent_and_correct']:.4f}")
+        print(f"  Short Hop (2-3):      {metrics['short_hop']:.4f}")
+        print(f"  Long Hop (>=6):       {metrics['long_hop']:.4f}")
 
-def evaluate_detailed(model, loader, device):
-    model.eval()
-    correct = 0
-    total = 0
-    by_hop_correct = {}
-    by_hop_total = {}
-    
-    with torch.no_grad():
-        for batch in loader:
-            (contexts, queries, context_splits, _) = batch[0]
-            y_target = batch[1].to(device)
-            hops = batch[2] # Tensr
-            
-            # Reconstruct Inputs
-            batch_input_texts = []
-            for i, (start, end) in enumerate(context_splits):
-                story_sents = contexts[start:end]
-                story_text = ". ".join(story_sents)
-                sub, obj = queries[i]
-                query_text = f"{sub} and {obj}"
-                batch_input_texts.append((story_text, query_text))
-                
-            enc = model.tokenizer(batch_input_texts, padding=True, truncation=True, return_tensors="pt").to(device)
-            
-            out = model.roberta(**enc)
-            cls = out.last_hidden_state[:, 0, :]
-            logits = model.classifier(cls)
-            preds = torch.argmax(logits, dim=1)
-            
-            correct += (preds == y_target).sum().item()
-            total += len(y_target)
-            
-            # Hops Split
-            # Assuming hops is tensor of ints
-            preds_np = preds.cpu().numpy()
-            targets_np = y_target.cpu().numpy()
-            hops_np = hops.cpu().numpy()
-            
-            for h, p, t in zip(hops_np, preds_np, targets_np):
-                if h not in by_hop_total:
-                    by_hop_total[h] = 0
-                    by_hop_correct[h] = 0
-                by_hop_total[h] += 1
-                if p == t:
-                    by_hop_correct[h] += 1
-                    
-    # Metrics
-    overall = correct / total if total > 0 else 0
-    
-    # Aggregates
-    short_corr = sum([by_hop_correct.get(h,0) for h in [2,3]])
-    short_tot = sum([by_hop_total.get(h,0) for h in [2,3]])
-    short_acc = short_corr / short_tot if short_tot > 0 else 0
-    
-    long_corr = sum([by_hop_correct.get(h,0) for h in range(6, 15)])
-    long_tot = sum([by_hop_total.get(h,0) for h in range(6, 15)])
-    long_acc = long_corr / long_tot if long_tot > 0 else 0
-    
-    return {
-        "overall": overall,
-        "short_hop": short_acc,
-        "long_hop": long_acc
-    }
-
-def run_consistency_check(model, dataset, device, sample_limit=200):
-    # Simplified Bijective Logic adapted from diagnose_path.py
+def evaluate_robustness(model, loader, device):
     import re
+    import random
     model.eval()
     
-    subset = dataset.data[:sample_limit]
-    consistent = 0
+    # Metrics containers
     total = 0
+    correct_base = 0
+    correct_mod = 0
+    consistent = 0
+    consistent_and_correct = 0
     
-    # Pre-map Names
+    count_changed_story = 0
+    count_changed_query = 0
+    
+    by_hop_total = {}
+    by_hop_correct = {}
+    
+    # Helper for swapping
     def apply_bijective_map(text, mapping):
         sorted_names = sorted(mapping.keys(), key=len, reverse=True)
         escaped_names = [re.escape(n) for n in sorted_names]
@@ -475,40 +412,116 @@ def run_consistency_check(model, dataset, device, sample_limit=200):
         pattern = re.compile(r'\b(' + '|'.join(escaped_names) + r')\b')
         def replacement(match): return mapping[match.group(0)]
         return pattern.sub(replacement, text)
-    
-    for row in tqdm(subset, desc="Consistency Check", leave=False):
-        story = row[2]
-        query = eval(row[3])
-        target_str = row[5] # label
-        
-        # 1. Base Prediction
-        enc_base = model.tokenizer([(story, f"{query[0]} and {query[1]}")], return_tensors='pt', padding=True, truncation=True).to(device)
-        with torch.no_grad():
+
+    with torch.no_grad():
+        for batch in loader: # Removed tqdm inside to clean output or keep it? user prefers print N.
+            # Let's keep loop simple.
+            (contexts, queries, context_splits, _) = batch[0]
+            y_target = batch[1].to(device)
+            hops = batch[2] # Tensor
+            
+            # Reconstruct Inputs & Create Aug versions
+            batch_inputs_base = []
+            batch_inputs_mod = []
+            
+            for i, (start, end) in enumerate(context_splits):
+                story_sents = contexts[start:end]
+                story_text = ". ".join(story_sents)
+                sub, obj = queries[i]
+                query_text = f"{sub} and {obj}"
+                
+                batch_inputs_base.append((story_text, query_text))
+                
+                # Logic for Mod
+                # 1. Sort for stability
+                names = sorted(list(set(re.findall(r"\[(.*?)\]", story_text))))
+                
+                story_mod = story_text
+                query_mod = query_text
+                
+                if len(names) >= 2:
+                    # 2. Random Bijection
+                    shuffled = list(names)
+                    random.shuffle(shuffled)
+                    mapping = {n: s for n, s in zip(names, shuffled)}
+                    
+                    story_mod = apply_bijective_map(story_text, mapping)
+                    q0_mod = mapping.get(sub, sub)
+                    q1_mod = mapping.get(obj, obj)
+                    query_mod = f"{q0_mod} and {q1_mod}"
+                
+                batch_inputs_mod.append((story_mod, query_mod))
+                
+                if story_mod != story_text:
+                    count_changed_story += 1
+                if query_mod != query_text:
+                    count_changed_query += 1
+
+            # Forward Base
+            enc_base = model.tokenizer(batch_inputs_base, padding=True, truncation=True, return_tensors="pt").to(device)
             out_base = model.roberta(**enc_base)
-            pred_base = torch.argmax(model.classifier(out_base.last_hidden_state[:, 0, :])).item()
+            logits_base = model.classifier(out_base.last_hidden_state[:, 0, :])
+            preds_base = torch.argmax(logits_base, dim=1)
             
-        # 2. Swap
-        names = list(set(re.findall(r"\[(.*?)\]", story)))
-        if len(names) < 2: continue
-        
-        # Shift Map: A->B, B->C ... Z->A
-        shuffled = names[1:] + [names[0]]
-        mapping = {n: s for n, s in zip(names, shuffled)}
-        
-        story_mod = apply_bijective_map(story, mapping)
-        q_mod_0 = mapping.get(query[0], query[0])
-        q_mod_1 = mapping.get(query[1], query[1])
-        
-        enc_mod = model.tokenizer([(story_mod, f"{q_mod_0} and {q_mod_1}")], return_tensors='pt', padding=True, truncation=True).to(device)
-        with torch.no_grad():
+            # Forward Mod
+            enc_mod = model.tokenizer(batch_inputs_mod, padding=True, truncation=True, return_tensors="pt").to(device)
             out_mod = model.roberta(**enc_mod)
-            pred_mod = torch.argmax(model.classifier(out_mod.last_hidden_state[:, 0, :])).item()
+            logits_mod = model.classifier(out_mod.last_hidden_state[:, 0, :])
+            preds_mod = torch.argmax(logits_mod, dim=1)
             
-        if pred_base == pred_mod:
-            consistent += 1
-        total += 1
-        
-    return consistent / total if total > 0 else 0
+            # Updates
+            total += len(y_target)
+            
+            correct_mask = (preds_base == y_target)
+            correct_mod_mask = (preds_mod == y_target)
+            consistent_mask = (preds_base == preds_mod)
+            
+            correct_base += correct_mask.sum().item()
+            correct_mod += correct_mod_mask.sum().item()
+            consistent += consistent_mask.sum().item()
+            
+            # Consistent AND Correct: (Pred_Base == Pred_Mod) AND (Pred_Base == Label)
+            consistent_and_correct += (consistent_mask & correct_mask).sum().item()
+            
+            # Hop Analysis (on Base)
+            preds_np = preds_base.cpu().numpy()
+            targets_np = y_target.cpu().numpy()
+            hops_np = hops.cpu().numpy()
+             
+            for h, p, t in zip(hops_np, preds_np, targets_np):
+                if h not in by_hop_total: by_hop_total[h] = 0; by_hop_correct[h] = 0
+                by_hop_total[h] += 1
+                if p == t: by_hop_correct[h] += 1
+
+    # Final Stats
+    acc_overall = correct_base / total if total > 0 else 0
+    acc_renamed = correct_mod / total if total > 0 else 0
+    prob_consistent = consistent / total if total > 0 else 0
+    prob_robust_correct = consistent_and_correct / total if total > 0 else 0
+    
+    changed_story_rate = count_changed_story / total if total > 0 else 0
+    changed_query_rate = count_changed_query / total if total > 0 else 0
+    
+    short_corr = sum([by_hop_correct.get(h,0) for h in [2,3]])
+    short_tot = sum([by_hop_total.get(h,0) for h in [2,3]])
+    short_acc = short_corr/short_tot if short_tot>0 else 0
+    
+    long_corr = sum([by_hop_correct.get(h,0) for h in range(6, 15)])
+    long_tot = sum([by_hop_total.get(h,0) for h in range(6, 15)])
+    long_acc = long_corr/long_tot if long_tot>0 else 0
+    
+    print(f"[Stats] Evaluated {total} samples.")
+    print(f"  Changed Story Rate:   {changed_story_rate:.4f}")
+    print(f"  Changed Query Rate:   {changed_query_rate:.4f}")
+    
+    return {
+        "overall": acc_overall,
+        "renamed": acc_renamed,
+        "consistency": prob_consistent,
+        "consistent_and_correct": prob_robust_correct,
+        "short_hop": short_acc,
+        "long_hop": long_acc
+    }
 
 
 if __name__ == "__main__":

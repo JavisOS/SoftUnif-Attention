@@ -176,3 +176,4 @@ cython_debug/
 id_ed25519*
 setup_ssh.sh
 copilot-instructions.md
+best_model_run0.pth
