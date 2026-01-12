@@ -265,13 +265,24 @@ class RelationConditionedEntityAttention(nn.Module):
             nn.Linear(hidden_size, num_relations),
         )
 
+        # Relation embedding added to K in the attention score:
+        #   score_ij = (q_i^T (k_j + E_{r_ij})) / sqrt(d)
+        # We avoid materializing (k_j + E) for all (i,j) by distributing:
+        #   q_i^T k_j + q_i^T E_{r_ij}
+        # For soft relation assignments, we use expectation under rel_probs.
+        self.rel_key = nn.Embedding(num_relations, hidden_size)
+
         # Relation-conditioned FiLM on values: V_ij = V_j * (1+gamma_ij) + beta_ij
         self.rel_gamma = nn.Embedding(num_relations, hidden_size)
         self.rel_beta = nn.Embedding(num_relations, hidden_size)
-        self.rel_bias = nn.Parameter(torch.zeros(num_relations))
 
         self.dropout = nn.Dropout(dropout)
         self.ln = nn.LayerNorm(hidden_size)
+
+        # Init
+        nn.init.normal_(self.rel_key.weight, mean=0.0, std=0.02)
+        nn.init.normal_(self.rel_gamma.weight, mean=0.0, std=0.02)
+        nn.init.normal_(self.rel_beta.weight, mean=0.0, std=0.02)
 
     def pair_rel_logits(self, e_i: torch.Tensor, e_j: torch.Tensor) -> torch.Tensor:
         # e_i, e_j: (H,)
@@ -302,8 +313,13 @@ class RelationConditionedEntityAttention(nn.Module):
             rel_logits = self.rel_mlp(feats)
             rel_probs = torch.softmax(rel_logits, dim=-1)
 
-            scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(H)  # (n, n)
-            scores = scores + torch.matmul(rel_probs, self.rel_bias)    # (n, n)
+            # Score: q_i^T (k_j + E_{r_ij}) / sqrt(d) = q_i^T k_j / sqrt(d) + q_i^T E_{r_ij} / sqrt(d)
+            # Using expectation under rel_probs for the second term:
+            #   E_r[ q_i^T E_r ] = Σ_r p(r_ij=r) * (q_i^T E_r)
+            scores_qk = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(H)  # (n, n)
+            qE = torch.matmul(q, self.rel_key.weight.t()) / math.sqrt(H)   # (n, R)
+            scores_qe = torch.einsum('ijr,ir->ij', rel_probs, qE)          # (n, n)
+            scores = scores_qk + scores_qe
 
             attn = torch.softmax(scores, dim=-1)
             attn = self.dropout(attn)
@@ -313,7 +329,7 @@ class RelationConditionedEntityAttention(nn.Module):
             v_expand = v.unsqueeze(0).expand(n_valid, n_valid, H)   # (n, n, H)
             v_cond = v_expand * (1.0 + gamma) + beta
 
-            msg = torch.sum(attn.unsqueeze(-1) * v_cond, dim=1)  # (n, H)
+            msg = torch.einsum('ij,ijh->ih', attn, v_cond)  # (n, H)
             out[b, :n_valid] = self.ln(E + self.dropout(msg))
 
         return out
