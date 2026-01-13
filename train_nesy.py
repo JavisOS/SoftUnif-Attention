@@ -560,7 +560,7 @@ def run_training():
     # 1. Load Tokenizer & Dataset
     tokenizer = RobertaTokenizerFast.from_pretrained("roberta-base")
     
-    root = "data/clutrr"
+    root = "data"
     dset = "data_089907f8"
     
     print("Loading Data (Augmentation Enabled)...")
