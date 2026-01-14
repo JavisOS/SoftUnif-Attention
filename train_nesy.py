@@ -4,12 +4,20 @@ import os
 import math
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 import numpy as np
 import wandb
 import random
+import argparse
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
-from transformers import RobertaTokenizerFast, RobertaModel
+from transformers import (
+    RobertaTokenizerFast, RobertaModel,
+    DebertaTokenizerFast, DebertaModel,
+    DebertaV2TokenizerFast, DebertaV2Model,
+    BertTokenizerFast, BertModel
+)
 
 # Path fixes
 sys.path.append(os.getcwd())
@@ -26,6 +34,44 @@ except ImportError:
 
 from clutrr.nesy_utils import parse_graph_and_path, apply_bijective_map
 from clutrr.entity_alignment import align_entity_spans_to_tokens
+
+
+def _unwrap_model(m: nn.Module) -> nn.Module:
+    return m.module if hasattr(m, "module") else m
+
+
+def _is_distributed() -> bool:
+    return dist.is_available() and dist.is_initialized()
+
+
+def _rank() -> int:
+    return dist.get_rank() if _is_distributed() else 0
+
+
+def _is_main_process() -> bool:
+    return _rank() == 0
+
+
+def _setup_ddp() -> tuple[int, int, int]:
+    """Initialize torch.distributed if launched via torchrun.
+
+    Returns: (rank, world_size, local_rank)
+    """
+    if not ("RANK" in os.environ and "WORLD_SIZE" in os.environ and "LOCAL_RANK" in os.environ):
+        raise RuntimeError(
+            "DDP 需要用 torchrun 启动，例如：\n"
+            "  torchrun --standalone --nproc_per_node=4 train_nesy.py --strategy ddp --gpus 0,1,2,3 ..."
+        )
+
+    rank = int(os.environ["RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+    local_rank = int(os.environ["LOCAL_RANK"])
+
+    if not dist.is_initialized():
+        dist.init_process_group(backend="nccl", init_method="env://")
+
+    torch.cuda.set_device(local_rank)
+    return rank, world_size, local_rank
 
 # ==========================================
 # 1. NeSy Dataset Wrapper
@@ -152,6 +198,11 @@ class NeSyCLUTRRDataset(CLUTRRDataset):
                 item['aug_story'] = story_str
                 item['aug_query'] = query
                 item['aug_node_spans'] = node_spans
+        else:
+            # Augmentation disabled: fill aug fields with originals to prevent downstream errors
+            item['aug_story'] = story_str
+            item['aug_query'] = query
+            item['aug_node_spans'] = node_spans
             
         return item
 
@@ -265,24 +316,13 @@ class RelationConditionedEntityAttention(nn.Module):
             nn.Linear(hidden_size, num_relations),
         )
 
-        # Relation embedding added to K in the attention score:
-        #   score_ij = (q_i^T (k_j + E_{r_ij})) / sqrt(d)
-        # We avoid materializing (k_j + E) for all (i,j) by distributing:
-        #   q_i^T k_j + q_i^T E_{r_ij}
-        # For soft relation assignments, we use expectation under rel_probs.
-        self.rel_key = nn.Embedding(num_relations, hidden_size)
-
         # Relation-conditioned FiLM on values: V_ij = V_j * (1+gamma_ij) + beta_ij
         self.rel_gamma = nn.Embedding(num_relations, hidden_size)
         self.rel_beta = nn.Embedding(num_relations, hidden_size)
+        self.rel_bias = nn.Parameter(torch.zeros(num_relations))
 
         self.dropout = nn.Dropout(dropout)
         self.ln = nn.LayerNorm(hidden_size)
-
-        # Init
-        nn.init.normal_(self.rel_key.weight, mean=0.0, std=0.02)
-        nn.init.normal_(self.rel_gamma.weight, mean=0.0, std=0.02)
-        nn.init.normal_(self.rel_beta.weight, mean=0.0, std=0.02)
 
     def pair_rel_logits(self, e_i: torch.Tensor, e_j: torch.Tensor) -> torch.Tensor:
         # e_i, e_j: (H,)
@@ -313,13 +353,8 @@ class RelationConditionedEntityAttention(nn.Module):
             rel_logits = self.rel_mlp(feats)
             rel_probs = torch.softmax(rel_logits, dim=-1)
 
-            # Score: q_i^T (k_j + E_{r_ij}) / sqrt(d) = q_i^T k_j / sqrt(d) + q_i^T E_{r_ij} / sqrt(d)
-            # Using expectation under rel_probs for the second term:
-            #   E_r[ q_i^T E_r ] = Σ_r p(r_ij=r) * (q_i^T E_r)
-            scores_qk = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(H)  # (n, n)
-            qE = torch.matmul(q, self.rel_key.weight.t()) / math.sqrt(H)   # (n, R)
-            scores_qe = torch.einsum('ijr,ir->ij', rel_probs, qE)          # (n, n)
-            scores = scores_qk + scores_qe
+            scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(H)  # (n, n)
+            scores = scores + torch.matmul(rel_probs, self.rel_bias)    # (n, n)
 
             attn = torch.softmax(scores, dim=-1)
             attn = self.dropout(attn)
@@ -329,7 +364,7 @@ class RelationConditionedEntityAttention(nn.Module):
             v_expand = v.unsqueeze(0).expand(n_valid, n_valid, H)   # (n, n, H)
             v_cond = v_expand * (1.0 + gamma) + beta
 
-            msg = torch.einsum('ij,ijh->ih', attn, v_cond)  # (n, H)
+            msg = torch.sum(attn.unsqueeze(-1) * v_cond, dim=1)  # (n, H)
             out[b, :n_valid] = self.ln(E + self.dropout(msg))
 
         return out
@@ -338,12 +373,24 @@ class RelationConditionedEntityAttention(nn.Module):
 # 2. NeSy Transformer Model
 # ==========================================
 class NeSyRoBERTa(nn.Module):
-    def __init__(self, device, tokenizer):
+    def __init__(self, device, tokenizer, model_type="roberta"):
         super().__init__()
         self.device = device
-        self.roberta = RobertaModel.from_pretrained("roberta-base")
+        
+        self.model_type = model_type.lower()
+        if self.model_type == "roberta":
+            self.encoder = RobertaModel.from_pretrained("roberta-base")
+        elif self.model_type == "deberta":
+            self.encoder = DebertaModel.from_pretrained("microsoft/deberta-base")
+        elif self.model_type == "deberta-v3":
+            self.encoder = DebertaV2Model.from_pretrained("microsoft/deberta-v3-base")
+        elif self.model_type == "bert":
+            self.encoder = BertModel.from_pretrained("bert-base-uncased")
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
+
         self.tokenizer = tokenizer # For debugging/resizing if needed
-        self.hidden_size = self.roberta.config.hidden_size
+        self.hidden_size = self.encoder.config.hidden_size
         
         # Heads
         self.classifier = nn.Linear(self.hidden_size, 21) # 21 relations
@@ -407,7 +454,7 @@ class NeSyRoBERTa(nn.Module):
         return torch.stack(emb_list) # (B, N_ent, H)
 
     def compute_logits(self, input_ids, attention_mask, entity_spans, query_indices):
-        out = self.roberta(input_ids=input_ids, attention_mask=attention_mask)
+        out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
         sequence_output = out.last_hidden_state
         cls_output = sequence_output[:, 0, :]
         logits_cls = self.classifier(cls_output)
@@ -553,12 +600,58 @@ class NeSyRoBERTa(nn.Module):
 # 3. Training Loop
 # ==========================================
 def run_training():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model_type", type=str, default="deberta", choices=["roberta", "deberta", "deberta-v3", "bert"], help="Model backbone type")
+    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
+    parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate")
+    parser.add_argument("--batch_size", type=int, default=16, help="Train batch size (per process for DDP)")
+    parser.add_argument("--eval_batch_size", type=int, default=32, help="Eval batch size (per process for DDP; eval runs on rank0 only)")
+    parser.add_argument("--num_workers", type=int, default=0, help="DataLoader num_workers")
+    parser.add_argument(
+        "--gpus",
+        type=str,
+        default="0",
+        help="选择可见 GPU，例如 '0' 或 '0,1,2,3'。脚本会设置 CUDA_VISIBLE_DEVICES。",
+    )
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        default="single",
+        choices=["single", "dp", "ddp"],
+        help="single=单卡；dp=DataParallel；ddp=DistributedDataParallel(推荐，多进程同步)",
+    )
+    args = parser.parse_args()
+
+    # IMPORTANT: set visible devices BEFORE any CUDA usage
+    if args.gpus is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
+
+    # Distributed init (if needed)
+    if args.strategy == "ddp":
+        rank, world_size, local_rank = _setup_ddp()
+        device = torch.device("cuda", local_rank)
+    else:
+        rank, world_size, local_rank = 0, 1, 0
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     set_seed(42)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}")
+    if _is_main_process():
+        print(f"Device: {device}")
+        print(f"Selected Model: {args.model_type}")
+        print(f"GPU Visible (CUDA_VISIBLE_DEVICES): {os.environ.get('CUDA_VISIBLE_DEVICES', '')}")
+        print(f"Strategy: {args.strategy} (rank={rank}, world_size={world_size}, local_rank={local_rank})")
     
     # 1. Load Tokenizer & Dataset
-    tokenizer = RobertaTokenizerFast.from_pretrained("roberta-base")
+    if args.model_type == "roberta":
+        tokenizer = RobertaTokenizerFast.from_pretrained("roberta-base")
+    elif args.model_type == "deberta":
+        tokenizer = DebertaTokenizerFast.from_pretrained("microsoft/deberta-base")
+    elif args.model_type == "deberta-v3":
+        tokenizer = DebertaV2TokenizerFast.from_pretrained("microsoft/deberta-v3-base")
+    elif args.model_type == "bert":
+        tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
+    else:
+        raise ValueError(f"Unknown model type: {args.model_type}")
     
     root = "data"
     dset = "data_089907f8"
@@ -582,18 +675,74 @@ def run_training():
     test_ds.data = [d for d in test_ds.data if d is not None]
     
     collator = NeSyCollator(tokenizer, device)
-    train_loader = DataLoader(train_ds, batch_size=16, shuffle=True, collate_fn=collator, num_workers=0)
-    test_loader = DataLoader(test_ds, batch_size=32, shuffle=False, collate_fn=collator, num_workers=0)
+
+    if args.strategy == "ddp":
+        train_sampler = DistributedSampler(train_ds, num_replicas=world_size, rank=rank, shuffle=True)
+        # Eval只在主进程做即可（避免重复跑一遍 test）
+        train_loader = DataLoader(
+            train_ds,
+            batch_size=args.batch_size,
+            shuffle=False,
+            sampler=train_sampler,
+            collate_fn=collator,
+            num_workers=args.num_workers,
+            pin_memory=True,
+        )
+        test_loader = DataLoader(
+            test_ds,
+            batch_size=args.eval_batch_size,
+            shuffle=False,
+            collate_fn=collator,
+            num_workers=args.num_workers,
+            pin_memory=True,
+        )
+    else:
+        train_loader = DataLoader(
+            train_ds,
+            batch_size=args.batch_size,
+            shuffle=True,
+            collate_fn=collator,
+            num_workers=args.num_workers,
+        )
+        test_loader = DataLoader(
+            test_ds,
+            batch_size=args.eval_batch_size,
+            shuffle=False,
+            collate_fn=collator,
+            num_workers=args.num_workers,
+        )
     
     # 2. Model
-    model = NeSyRoBERTa(device, tokenizer).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
+    model = NeSyRoBERTa(device, tokenizer, model_type=args.model_type).to(device)
+
+    if args.strategy == "dp":
+        if not torch.cuda.is_available():
+            raise RuntimeError("dp 需要 CUDA 可用")
+        n = torch.cuda.device_count()
+        if n <= 1:
+            if _is_main_process():
+                print("[Warn] dp 但当前可见 GPU <= 1，将退化为单卡")
+        else:
+            model = nn.DataParallel(model, device_ids=list(range(n)))
+    elif args.strategy == "ddp":
+        # DDP recommended for multi-GPU sync training
+        model = torch.nn.parallel.DistributedDataParallel(
+            model,
+            device_ids=[local_rank],
+            output_device=local_rank,
+            find_unused_parameters=False,
+        )
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     
     # 3. Loop
-    epochs = 10 
+    epochs = args.epochs 
     
     print("Starting Training (Scheme A + B)...")
     for epoch in range(epochs):
+        if args.strategy == "ddp":
+            # type: ignore[name-defined]
+            train_sampler.set_epoch(epoch)
+
         model.train()
         total_loss = 0
         accum_aux = 0
@@ -602,10 +751,15 @@ def run_training():
         pbar = tqdm(train_loader, desc=f"Ep {epoch+1}")
         for batch in pbar:
             if batch is None: continue
+
+            # Avoid DataParallel scatter issues with non-tensor fields
+            batch_for_model = dict(batch)
+            if "raw_batch" in batch_for_model:
+                batch_for_model.pop("raw_batch")
             
             optimizer.zero_grad()
-            # lambda1 (NextHop) = 1.0, lambda_cons (Consistency) = 5.0
-            out = model(batch, lambda1=1.0, lambda_cons=5.0, lambda_rel=1.0)
+            # lambda1 (NextHop) = 1.0, lambda_cons (Consistency) = 5.0，lambda_rel=1.0
+            out = model(batch_for_model, lambda1=1.0, lambda_cons=5.0, lambda_rel=1.0)
             
             loss = out['loss']
             loss.backward()
@@ -624,24 +778,31 @@ def run_training():
             })
             
         avg_loss = total_loss / len(train_loader)
-        print(
-            f"Epoch {epoch+1} Done. Loss: {avg_loss:.4f} "
-            f"(Aux: {accum_aux/len(train_loader):.4f}, Cons: {accum_cons/len(train_loader):.4f})"
-        )
+        if _is_main_process():
+            print(
+                f"Epoch {epoch+1} Done. Loss: {avg_loss:.4f} "
+                f"(Aux: {accum_aux/len(train_loader):.4f}, Cons: {accum_cons/len(train_loader):.4f})"
+            )
         
         # 4. Evaluation
-        print(f"--> Evaluating Robustness Epoch {epoch+1}...")
-        metrics = evaluate_robustness(model, test_loader, device)
-        
-        print(f"  Overall Acc (Base):   {metrics['overall']:.4f}")
-        print(f"  Renamed Acc (Mod):    {metrics['renamed']:.4f}")
-        print(f"  Consistency:          {metrics['consistency']:.4f}")
-        print(f"  Consistent & Correct: {metrics['consistent_and_correct']:.4f}")
-        print(f"  Short Hop (2-3):      {metrics['short_hop']:.4f}")
-        print(f"  Long Hop (>=6):       {metrics['long_hop']:.4f}")
+        if _is_main_process():
+            print(f"--> Evaluating Robustness Epoch {epoch+1}...")
+            metrics = evaluate_robustness(model, test_loader, device)
+            
+            print(f"  Overall Acc (Base):   {metrics['overall']:.4f}")
+            print(f"  Renamed Acc (Mod):    {metrics['renamed']:.4f}")
+            print(f"  Consistency:          {metrics['consistency']:.4f}")
+            print(f"  Consistent & Correct: {metrics['consistent_and_correct']:.4f}")
+            print(f"  Short Hop (2-3):      {metrics['short_hop']:.4f}")
+            print(f"  Long Hop (>=6):       {metrics['long_hop']:.4f}")
+
+    if args.strategy == "ddp" and _is_distributed():
+        dist.barrier()
+        dist.destroy_process_group()
 
 def evaluate_robustness(model, loader, device):
     model.eval()
+    base_model = _unwrap_model(model)
     
     # Metrics containers
     total = 0
@@ -664,7 +825,7 @@ def evaluate_robustness(model, loader, device):
             y_target = batch['labels']
             hops = batch['hops']
 
-            logits_base, _ = model.compute_logits(
+            logits_base, _ = base_model.compute_logits(
                 input_ids=batch['input_ids'],
                 attention_mask=batch['attention_mask'],
                 entity_spans=batch['entity_spans'],
@@ -672,7 +833,7 @@ def evaluate_robustness(model, loader, device):
             )
             preds_base = torch.argmax(logits_base, dim=1)
 
-            logits_mod, _ = model.compute_logits(
+            logits_mod, _ = base_model.compute_logits(
                 input_ids=batch['aug_input_ids'],
                 attention_mask=batch['aug_attention_mask'],
                 entity_spans=batch['aug_entity_spans'],
