@@ -13,6 +13,8 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 from transformers import (
+    AutoModel,
+    AutoTokenizer,
     RobertaTokenizerFast, RobertaModel,
     DebertaTokenizerFast, DebertaModel,
     DebertaV2TokenizerFast, DebertaV2Model,
@@ -380,12 +382,23 @@ class NeSyRoBERTa(nn.Module):
         self.model_type = model_type.lower()
         if self.model_type == "roberta":
             self.encoder = RobertaModel.from_pretrained("roberta-base")
+        elif self.model_type == "roberta-large":
+            self.encoder = RobertaModel.from_pretrained("roberta-large")
         elif self.model_type == "deberta":
             self.encoder = DebertaModel.from_pretrained("microsoft/deberta-base")
         elif self.model_type == "deberta-v3":
             self.encoder = DebertaV2Model.from_pretrained("microsoft/deberta-v3-base")
+        elif self.model_type == "deberta-v3-large":
+            self.encoder = DebertaV2Model.from_pretrained("microsoft/deberta-v3-large")
         elif self.model_type == "bert":
             self.encoder = BertModel.from_pretrained("bert-base-uncased")
+        elif self.model_type == "modernbert":
+            # ModernBERT is hosted on HF Hub and may require remote code.
+            try:
+                self.encoder = AutoModel.from_pretrained("answerdotai/ModernBERT-base", trust_remote_code=True)
+            except TypeError:
+                # Older transformers versions may not accept trust_remote_code here.
+                self.encoder = AutoModel.from_pretrained("answerdotai/ModernBERT-base")
         else:
             raise ValueError(f"Unknown model type: {model_type}")
 
@@ -601,7 +614,13 @@ class NeSyRoBERTa(nn.Module):
 # ==========================================
 def run_training():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_type", type=str, default="deberta", choices=["roberta", "deberta", "deberta-v3", "bert"], help="Model backbone type")
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        default="deberta",
+        choices=["roberta", "roberta-large", "deberta", "deberta-v3", "deberta-v3-large", "bert", "modernbert"],
+        help="Model backbone type",
+    )
     parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate")
     parser.add_argument("--batch_size", type=int, default=16, help="Train batch size (per process for DDP)")
@@ -644,12 +663,21 @@ def run_training():
     # 1. Load Tokenizer & Dataset
     if args.model_type == "roberta":
         tokenizer = RobertaTokenizerFast.from_pretrained("roberta-base")
+    elif args.model_type == "roberta-large":
+        tokenizer = RobertaTokenizerFast.from_pretrained("roberta-large")
     elif args.model_type == "deberta":
         tokenizer = DebertaTokenizerFast.from_pretrained("microsoft/deberta-base")
     elif args.model_type == "deberta-v3":
         tokenizer = DebertaV2TokenizerFast.from_pretrained("microsoft/deberta-v3-base")
+    elif args.model_type == "deberta-v3-large":
+        tokenizer = DebertaV2TokenizerFast.from_pretrained("microsoft/deberta-v3-large")
     elif args.model_type == "bert":
         tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
+    elif args.model_type == "modernbert":
+        try:
+            tokenizer = AutoTokenizer.from_pretrained("answerdotai/ModernBERT-base", use_fast=True, trust_remote_code=True)
+        except TypeError:
+            tokenizer = AutoTokenizer.from_pretrained("answerdotai/ModernBERT-base", use_fast=True)
     else:
         raise ValueError(f"Unknown model type: {args.model_type}")
     

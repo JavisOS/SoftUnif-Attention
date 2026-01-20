@@ -8,6 +8,8 @@ import argparse
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import (
+    AutoModel,
+    AutoTokenizer,
     RobertaTokenizerFast, RobertaModel,
     DebertaTokenizerFast, DebertaModel,
     DebertaV2TokenizerFast, DebertaV2Model,
@@ -125,10 +127,19 @@ class BaselineModel(nn.Module):
             self.encoder = BertModel.from_pretrained("bert-base-uncased")
         elif model_type == 'roberta':
             self.encoder = RobertaModel.from_pretrained("roberta-base")
+        elif model_type == 'roberta-large':
+            self.encoder = RobertaModel.from_pretrained("roberta-large")
         elif model_type == 'deberta':
             self.encoder = DebertaModel.from_pretrained("microsoft/deberta-base")
         elif model_type == 'deberta-v3':
             self.encoder = DebertaV2Model.from_pretrained("microsoft/deberta-v3-base")
+        elif model_type == 'deberta-v3-large':
+            self.encoder = DebertaV2Model.from_pretrained("microsoft/deberta-v3-large")
+        elif model_type == 'modernbert':
+            try:
+                self.encoder = AutoModel.from_pretrained("answerdotai/ModernBERT-base", trust_remote_code=True)
+            except TypeError:
+                self.encoder = AutoModel.from_pretrained("answerdotai/ModernBERT-base")
         else:
             raise ValueError(f"Unknown model type: {model_type}")
             
@@ -214,7 +225,7 @@ def evaluate(model, loader):
 def run():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_type", type=str, default="roberta", 
-                        choices=["bert", "roberta", "deberta", "deberta-v3"], 
+                        choices=["bert", "roberta", "roberta-large", "deberta", "deberta-v3", "deberta-v3-large", "modernbert"], 
                         help="Model type")
     parser.add_argument("--root", type=str, default="data", help="Data root directory")
     parser.add_argument("--dataset", type=str, default="data_089907f8", help="Dataset folder name")
@@ -233,10 +244,19 @@ def run():
         tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
     elif args.model_type == 'roberta':
         tokenizer = RobertaTokenizerFast.from_pretrained("roberta-base")
+    elif args.model_type == 'roberta-large':
+        tokenizer = RobertaTokenizerFast.from_pretrained("roberta-large")
     elif args.model_type == 'deberta':
         tokenizer = DebertaTokenizerFast.from_pretrained("microsoft/deberta-base")
     elif args.model_type == 'deberta-v3':
         tokenizer = DebertaV2TokenizerFast.from_pretrained("microsoft/deberta-v3-base")
+    elif args.model_type == 'deberta-v3-large':
+        tokenizer = DebertaV2TokenizerFast.from_pretrained("microsoft/deberta-v3-large")
+    elif args.model_type == 'modernbert':
+        try:
+            tokenizer = AutoTokenizer.from_pretrained("answerdotai/ModernBERT-base", use_fast=True, trust_remote_code=True)
+        except TypeError:
+            tokenizer = AutoTokenizer.from_pretrained("answerdotai/ModernBERT-base", use_fast=True)
     
     # Data
     print("Loading Data...")
