@@ -24,8 +24,6 @@ try:
 except ImportError:
     pass
 
-from clutrr.nesy_utils import parse_graph_and_path
-
 # ==========================================
 # 1. Dataset & Collator
 # ==========================================
@@ -63,15 +61,11 @@ class BaselineDataset(Dataset):
         query_tuple = eval(row[3]) # ('sub', 'obj')
         target_rel = row[5]
         
-        # Calculate hops for evaluation (requires graph parsing)
-        # If parsing fails, default to -1
+        # Calculate hops from task_name directly (zero overhead)
+        # task_name format: "task_1.3" -> hop 3
         try:
-            graph_info = parse_graph_and_path(row)
-            if graph_info:
-                # Path includes start node, so hops = len - 1
-                hops = len(graph_info['path_node_indices']) - 1
-            else:
-                hops = -1
+            task_name = row[10]
+            hops = int(task_name.split('.')[-1])
         except:
             hops = -1
 
@@ -82,6 +76,49 @@ class BaselineDataset(Dataset):
             'query': f"{query_tuple[0]} and {query_tuple[1]}",
             'target_id': target_id,
             'hops': hops
+        }
+
+
+class RuleTakerDataset(Dataset):
+    def __init__(self, split="train", tokenizer=None, dataset_dir=None, depths=None):
+        self.tokenizer = tokenizer
+        self.data = []
+
+        if not dataset_dir:
+            raise ValueError("RuleTakerDataset requires --ruletaker_root for local data.")
+
+        files = []
+        if depths:
+            for d in depths:
+                fpath = os.path.join(dataset_dir, f"depth-{d}", f"{split}.jsonl")
+                if os.path.exists(fpath):
+                    files.append(fpath)
+        else:
+            pattern = os.path.join(dataset_dir, "depth-*", f"{split}.jsonl")
+            files = sorted(glob.glob(pattern))
+
+        for fpath in files:
+            with open(fpath, "r") as f:
+                for line in f:
+                    obj = json.loads(line)
+                    context = obj["context"]
+                    for q in obj["questions"]:
+                        self.data.append({
+                            "context": context,
+                            "question": q["text"],
+                            "label": 1 if q["label"] is True else 0,
+                        })
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, i):
+        item = self.data[i]
+        return {
+            "story": item["context"],
+            "query": item["question"],
+            "target_id": item["label"],
+            "hops": 0,
         }
 
 class BaselineCollator:
@@ -222,6 +259,23 @@ def evaluate(model, loader):
     return overall_acc, short_acc, long_acc
 
 
+def evaluate_ruletaker(model, loader):
+    model.eval()
+    total = 0
+    correct = 0
+
+    with torch.no_grad():
+        for batch in loader:
+            labels = batch['labels']
+            out = model(batch['input_ids'], batch['attention_mask'])
+            preds = torch.argmax(out['logits'], dim=1)
+            total += len(labels)
+            correct += (preds == labels).sum().item()
+
+    acc = correct / total if total > 0 else 0.0
+    return acc, total
+
+
 def run():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_type", type=str, default="roberta", 
@@ -232,6 +286,11 @@ def run():
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--epochs", type=int, default=10)
+    # RuleTaker args
+    parser.add_argument("--ruletaker_root", type=str, default="data/rule-reasoning-dataset-V2020.2.5.0/original")
+    parser.add_argument("--ruletaker_train_depths", type=str, default=None, help="Comma separated depths for training, e.g. '0,1,2'")
+    parser.add_argument("--ruletaker_test_depths", type=str, default="0,1,2,3,5", help="Comma separated depths for testing")
+    parser.add_argument("--ruletaker_extra_test_depths", type=str, default=None, help="Extra depths e.g. '3ext,3ext-NatLang'")
     args = parser.parse_args()
     
     set_seed(42)
@@ -260,12 +319,33 @@ def run():
     
     # Data
     print("Loading Data...")
-    train_ds = BaselineDataset(args.root, args.dataset, "train")
-    test_ds = BaselineDataset(args.root, args.dataset, "test")
-    
     collator = BaselineCollator(tokenizer, device, args.model_type)
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collator)
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size * 2, shuffle=False, collate_fn=collator)
+
+    test_loaders = {}
+    if args.dataset == "ruletaker":
+        train_depths = args.ruletaker_train_depths.split(",") if args.ruletaker_train_depths else None
+        if train_depths:
+            train_depths = [d.strip() for d in train_depths if d.strip()]
+
+        train_ds = RuleTakerDataset("train", tokenizer=tokenizer, dataset_dir=args.ruletaker_root, depths=train_depths)
+        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collator)
+
+        test_depths = args.ruletaker_test_depths.split(",") if args.ruletaker_test_depths else []
+        if args.ruletaker_extra_test_depths:
+            test_depths += args.ruletaker_extra_test_depths.split(",")
+        test_depths = [d.strip() for d in test_depths if d.strip()]
+
+        for d in test_depths:
+            ds = RuleTakerDataset("test", tokenizer=tokenizer, dataset_dir=args.ruletaker_root, depths=[d])
+            if len(ds) > 0:
+                test_loaders[f"depth-{d}"] = DataLoader(ds, batch_size=args.batch_size * 2, shuffle=False, collate_fn=collator)
+            else:
+                print(f"[Warn] Skipping empty test depth: {d}")
+    else:
+        train_ds = BaselineDataset(args.root, args.dataset, "train")
+        test_ds = BaselineDataset(args.root, args.dataset, "test")
+        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collator)
+        test_loader = DataLoader(test_ds, batch_size=args.batch_size * 2, shuffle=False, collate_fn=collator)
     
     # Model
     model = BaselineModel(args.model_type, num_labels=len(relation_id_map)).to(device)
@@ -290,11 +370,25 @@ def run():
             pbar.set_postfix({'loss': f"{loss.item():.4f}"})
             
         # Eval
-        overall, short_h, long_h = evaluate(model, test_loader)
         print(f"Epoch {epoch+1}: Loss = {total_loss/len(train_loader):.4f}")
-        print(f"  Overall Acc (Base): {overall:.4f}")
-        print(f"  Short Hop (2-3):    {short_h:.4f}")
-        print(f"  Long Hop (>=6):     {long_h:.4f}")
+        if args.dataset == "ruletaker":
+            results = {}
+            total_samples = 0
+            weighted_acc = 0.0
+            for name, loader in test_loaders.items():
+                acc, n = evaluate_ruletaker(model, loader)
+                results[name] = acc
+                print(f"  {name}: {acc:.4f} (n={n})")
+                weighted_acc += acc * n
+                total_samples += n
+            macro = sum(results.values()) / len(results) if results else 0.0
+            micro = weighted_acc / total_samples if total_samples > 0 else 0.0
+            print(f"  [Summary] Macro Avg: {macro:.4f}, Micro Avg: {micro:.4f}")
+        else:
+            overall, short_h, long_h = evaluate(model, test_loader)
+            print(f"  Overall Acc (Base): {overall:.4f}")
+            print(f"  Short Hop (2-3):    {short_h:.4f}")
+            print(f"  Long Hop (>=6):     {long_h:.4f}")
         
 if __name__ == "__main__":
     run()

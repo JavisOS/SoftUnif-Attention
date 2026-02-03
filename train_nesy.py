@@ -9,7 +9,7 @@ import numpy as np
 import wandb
 import random
 import argparse
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 from transformers import (
@@ -34,6 +34,12 @@ except ImportError:
     from baseline_roberta_analysis import CLUTRRDataset, relation_id_map, id_to_relation, set_seed, evaluate
 
 
+import re
+import json
+import glob
+import hashlib
+from torch.nn.utils.rnn import pad_sequence
+from datasets import load_dataset
 from clutrr.nesy_utils import parse_graph_and_path, apply_bijective_map
 from clutrr.entity_alignment import align_entity_spans_to_tokens
 
@@ -76,8 +82,253 @@ def _setup_ddp() -> tuple[int, int, int]:
     return rank, world_size, local_rank
 
 # ==========================================
-# 1. NeSy Dataset Wrapper
+# 1. NeSy Dataset Wrappers
 # ==========================================
+class NeSyRuleTakerDataset(Dataset):
+    def __init__(self, split="train", tokenizer=None, augment=False, augment_seed=None, limit=None, dataset_dir=None, depths=None):
+        self.tokenizer = tokenizer
+        self.augment = augment
+        self.augment_seed = augment_seed
+        self.label_map = {'not_entailment': 0, 'entailment': 1}
+        self.name_pattern = re.compile(r"\b[A-Z][a-z]+\b")
+        
+        self.data = []
+        
+        # Load Raw Data
+        if dataset_dir:
+            files = []
+            if depths:
+                print(f"Loading RuleTaker from local: {dataset_dir} (split={split}, depths={depths})")
+                for d in depths:
+                     # Check normal numeric depths
+                     fpath = os.path.join(dataset_dir, f"depth-{d}", f"{split}.jsonl")
+                     if os.path.exists(fpath):
+                         files.append(fpath)
+                     else:
+                         # Handle extra datasets which might not match "depth-X" perfectly or user put full name in depths?
+                         # The user said "--ruletaker_extra_test_depths" but also passed depths list here.
+                         pass
+            else:
+                 print(f"Loading RuleTaker from local: {dataset_dir} (split={split}, auto-detect depths)")
+                 pattern = os.path.join(dataset_dir, "depth-*", f"{split}.jsonl")
+                 files = sorted(glob.glob(pattern))
+                 if not files:
+                      pattern = os.path.join(dataset_dir, f"{split}.jsonl")
+                      files = sorted(glob.glob(pattern))
+            
+            print(f"  Found {len(files)} files: {[os.path.basename(os.path.dirname(f)) for f in files]}")
+            for fpath in files:
+                with open(fpath, 'r') as f:
+                    for line in f:
+                        obj = json.loads(line)
+                        context = obj['context']
+                        for q in obj['questions']:
+                            self.data.append({
+                                'context': context,
+                                'question': q['text'],
+                                'label': 1 if q['label'] is True else 0 
+                            })
+            if limit and limit < len(self.data):
+                self.data = self.data[:limit]
+        else:
+            hf_split = "validation" if split == "dev" else split
+            ds = load_dataset("tasksource/ruletaker", split=hf_split)
+            if limit and limit < len(ds):
+                 ds = ds.select(range(limit))
+            for item in ds:
+                raw_label = item['label']
+                label_id = raw_label if isinstance(raw_label, int) else self.label_map.get(str(raw_label), 0)
+                self.data.append({
+                    'context': item.get('context', item.get('text', '')),
+                    'question': item.get('question', ''),
+                    'label': label_id
+                })
+        
+        # Caching Logic
+        self.cached_features = None
+        if dataset_dir and self.tokenizer:
+            # Create a cache key based on tokenizer and data size
+            model_name = self.tokenizer.name_or_path.replace("/", "_")
+            cache_name = f"cached_{split}_{model_name}_{len(self.data)}.pt"
+            self.cache_path = os.path.join(dataset_dir, cache_name)
+            
+            if os.path.exists(self.cache_path):
+                print(f"Loading cached features from {self.cache_path}...")
+                self.cached_features = torch.load(self.cache_path)
+            else:
+                print(f"Pre-tokenizing and caching to {self.cache_path}...")
+                self.cached_features = self._preprocess_all()
+                torch.save(self.cached_features, self.cache_path)
+
+    def __len__(self):
+        return len(self.data)
+        
+    def extract_names(self, text):
+        matches = self.name_pattern.findall(text)
+        exclude = {"If", "All", "Then", "And", "Or", "Not", "True", "False", "The", "A", "An"}
+        names = sorted(list(set([m for m in matches if m not in exclude])))
+        return names
+        
+    def _preprocess_all(self):
+        features = []
+        for i, item in enumerate(tqdm(self.data, desc="Tokenizing")):
+            context = item['context']
+            question = item['question']
+            
+            # 1. Tokenize (Clean)
+            enc = self.tokenizer(
+                context, 
+                question, 
+                truncation=True, 
+                max_length=512, 
+                # return_tensors='pt' # We store as list to save memory then dict
+            )
+            
+            # 2. Entity Extraction & Alignment
+            full_text = f"{context} {question}"
+            all_names = self.extract_names(full_text)
+            alignments = align_entity_spans_to_tokens(context, all_names, self.tokenizer)
+            
+            node_spans = []
+            for name in all_names:
+                res = alignments.get(name)
+                node_spans.append(res['token_span'] if (res and res['token_span']) else None)
+                
+            # Query Entities
+            q_names = [n for n in all_names if n in question]
+            if len(q_names) >= 2:
+                p1 = question.find(q_names[0])
+                p2 = question.find(q_names[1])
+                sub_name, obj_name = (q_names[0], q_names[1]) if p1 < p2 else (q_names[1], q_names[0])
+            elif len(q_names) == 1:
+                sub_name, obj_name = q_names[0], q_names[0]
+            else:
+                sub_name, obj_name = None, None
+            
+            feat = {
+                'input_ids': enc['input_ids'],
+                'attention_mask': enc['attention_mask'],
+                'node_spans': node_spans,
+                'num_nodes': len(all_names),
+                'query_indices': (all_names.index(sub_name) if sub_name else -1, all_names.index(obj_name) if obj_name else -1),
+                'metadata': {
+                    'sub_name': sub_name, 'obj_name': obj_name, 'all_names': all_names
+                }
+            }
+            features.append(feat)
+        return features
+
+    def get_aug_map(self, names, seed_offset):
+        if not self.augment or len(names) < 2:
+            return None
+        rng = random.Random(self.augment_seed + seed_offset) if self.augment_seed is not None else random
+        shuffled = list(names)
+        for _ in range(10):
+            rng.shuffle(shuffled)
+            if any(a != b for a, b in zip(names, shuffled)):
+                break
+        return {n: s for n, s in zip(names, shuffled)}
+
+    def __getitem__(self, i):
+        item = self.data[i]
+        label_id = item['label']
+        
+        # Check Cache
+        if self.cached_features:
+            feat = self.cached_features[i]
+            input_ids = feat['input_ids']
+            attention_mask = feat['attention_mask']
+            node_spans = feat['node_spans']
+            num_nodes = feat['num_nodes']
+            query_indices = feat['query_indices']
+            # For augmentation, we need raw data
+            context = item['context']
+            question = item['question']
+            all_names = feat['metadata']['all_names'] # Use cached names
+            sub_name = feat['metadata']['sub_name']
+            obj_name = feat['metadata']['obj_name']
+        else:
+            # Fallback (On-the-fly) - copied logic
+            context = item['context']
+            question = item['question']
+            full_text = f"{context} {question}"
+            all_names = self.extract_names(full_text)
+            enc = self.tokenizer(context, question, truncation=True, max_length=512)
+            input_ids = enc['input_ids']
+            attention_mask = enc['attention_mask']
+            alignments = align_entity_spans_to_tokens(context, all_names, self.tokenizer)
+            node_spans = [alignments.get(n)['token_span'] if alignments.get(n) and alignments.get(n)['token_span'] else None for n in all_names]
+            num_nodes = len(all_names)
+            
+            q_names = [n for n in all_names if n in question]
+            if len(q_names) >= 2:
+                p1 = question.find(q_names[0])
+                p2 = question.find(q_names[1])
+                sub_name, obj_name = (q_names[0], q_names[1]) if p1 < p2 else (q_names[1], q_names[0])
+            elif len(q_names) == 1:
+                sub_name, obj_name = q_names[0], q_names[0]
+            else:
+                sub_name, obj_name = None, None
+            query_indices = (all_names.index(sub_name) if sub_name else -1, all_names.index(obj_name) if obj_name else -1)
+
+        result = {
+            'input_ids': torch.tensor(input_ids, dtype=torch.long),
+            'attention_mask': torch.tensor(attention_mask, dtype=torch.long),
+            'query_indices': query_indices,
+            'target_id': label_id,
+            'node_spans': node_spans,
+            'num_nodes': num_nodes,
+            'hops': 0,
+            
+            # Dummy Path
+            'path_indices': [-1],
+            'path_rel_labels': [],
+            
+            # Raw text (needed for aug if not cached, or verifying)
+            'story': context,
+            'query_text_raw': question
+        }
+        
+        # 2. Augmentation (Still partly on-the-fly for tokens, but we use cached names)
+        # Note: Pre-computing ALL augmentations explodes storage. We do it on dynamic epoch?
+        # But user wants speed.
+        # If we use cached_features, main bottleneck is gone. Augmentation overhead remains but less frequent.
+        
+        aug_map = self.get_aug_map(all_names, i)
+        if aug_map:
+            aug_story = apply_bijective_map(context, aug_map)
+            aug_question = apply_bijective_map(question, aug_map)
+            aug_all_names = [aug_map[n] for n in all_names]
+            
+            # Tokenization here is unavoidable if we want random renaming
+            # But we can assume it's fast enough or set num_workers > 0
+            aug_alignments = align_entity_spans_to_tokens(aug_story, aug_all_names, self.tokenizer)
+            aug_node_spans = []
+            for name in aug_all_names:
+                res = aug_alignments.get(name)
+                aug_node_spans.append(res['token_span'] if (res and res['token_span']) else None)
+            
+            result.update({
+                'aug_story': aug_story,
+                'aug_query_text_raw': aug_question,
+                'aug_node_spans': aug_node_spans
+            })
+        else:
+             # If no aug, just point to original (already tensor)
+             # But collator expects strings for augmentation path if we don't return tensor
+             # To be consistent, we return raw strings and let collator handle aug?
+             # Or we return tensors for aug too?
+             # Let's let Collator detect.
+            result.update({
+                'aug_story': context,
+                'aug_query_text_raw': question, 
+                'aug_node_spans': node_spans
+            })
+            
+        return result
+
+
+
 class NeSyCLUTRRDataset(CLUTRRDataset):
     def __init__(
         self,
@@ -112,11 +363,11 @@ class NeSyCLUTRRDataset(CLUTRRDataset):
         all_names = graph_info['all_names']
         path_rel_labels = graph_info.get('path_relation_labels', [])
 
-        # Query indices are in the all_names index space
+        # Query indices: Use pre-computed query_edge (row[13]) to avoid O(N) search and name matching issues
         try:
-            sub_name, obj_name = query
-            sub_idx = all_names.index(sub_name)
-            obj_idx = all_names.index(obj_name)
+            # row[13] is string "(u, v)"
+            query_edge = eval(row[13]) 
+            sub_idx, obj_idx = query_edge
         except Exception:
             return None
         
@@ -213,65 +464,64 @@ def collate_nesy(batch):
     pass
 
 class NeSyCollator:
-    def __init__(self, tokenizer, device):
+    def __init__(self, tokenizer):
         self.tokenizer = tokenizer
-        self.device = device
         
     def __call__(self, batch):
         batch = [b for b in batch if b is not None]
         if not batch: return None
         
-        stories = [b['story'] for b in batch]
-        queries = [f"{b['query'][0]} and {b['query'][1]}" for b in batch]
-        targets = torch.tensor([b['target_id'] for b in batch], dtype=torch.long).to(self.device)
-        hops = torch.tensor([b['hops'] for b in batch], dtype=torch.long).to(self.device)
-        query_indices = torch.tensor([b['query_indices'] for b in batch], dtype=torch.long).to(self.device)
+        # Check if pre-tokenized (cached)
+        is_pre_tokenized = isinstance(batch[0].get('input_ids'), torch.Tensor)
         
-        # Standard Encoding
-        enc = self.tokenizer(
-            stories,
-            queries, 
-            padding=True,
-            truncation=True,
-            return_tensors='pt',
-            add_special_tokens=True
-        ).to(self.device)
-        
-        # Augmented Encoding (if present)
-        enc_aug = None
-        if 'aug_story' in batch[0]:
-            aug_stories = [b['aug_story'] for b in batch]
-            aug_queries = [f"{b['aug_query'][0]} and {b['aug_query'][1]}" for b in batch]
-            enc_aug = self.tokenizer(
-                aug_stories,
-                aug_queries,
+        if is_pre_tokenized:
+            input_ids = pad_sequence([b['input_ids'] for b in batch], batch_first=True, padding_value=self.tokenizer.pad_token_id)
+            attention_mask = pad_sequence([b['attention_mask'] for b in batch], batch_first=True, padding_value=0)
+        else:
+            stories = [b['story'] for b in batch]
+            if 'query_text_raw' in batch[0]:
+                queries = [b['query_text_raw'] for b in batch]
+            else:
+                queries = [f"{b['query'][0]} and {b['query'][1]}" for b in batch]
+
+            enc = self.tokenizer(
+                stories,
+                queries, 
                 padding=True,
                 truncation=True,
                 return_tensors='pt',
                 add_special_tokens=True
-            ).to(self.device)
+            )
+            input_ids = enc.input_ids
+            attention_mask = enc.attention_mask
+
+        targets = torch.tensor([b['target_id'] for b in batch], dtype=torch.long)
+        hops = torch.tensor([b['hops'] for b in batch], dtype=torch.long)
+        query_indices = torch.tensor([b['query_indices'] for b in batch], dtype=torch.long)
         
-        # Prepare Aux Labels (Same as before)
+        # Prepare Aux Labels
         max_path_len = max([len(b['path_indices']) for b in batch])
-        path_node_ids = torch.full((len(batch), max_path_len), -1, dtype=torch.long).to(self.device)
+        path_node_ids = torch.full((len(batch), max_path_len), -1, dtype=torch.long)
 
         max_rel_len = max([len(b.get('path_rel_labels', [])) for b in batch])
-        path_rel_ids = torch.full((len(batch), max_rel_len), -1, dtype=torch.long).to(self.device)
+        path_rel_ids = torch.full((len(batch), max_rel_len), -1, dtype=torch.long)
         
         max_entities = max([b['num_nodes'] for b in batch])
-        entity_spans = torch.full((len(batch), max_entities, 2), -1, dtype=torch.long).to(self.device)
-        aug_entity_spans = torch.full((len(batch), max_entities, 2), -1, dtype=torch.long).to(self.device)
+        entity_spans = torch.full((len(batch), max_entities, 2), -1, dtype=torch.long)
+        aug_entity_spans = torch.full((len(batch), max_entities, 2), -1, dtype=torch.long)
         
         for i, b in enumerate(batch):
             p_len = len(b['path_indices'])
             path_node_ids[i, :p_len] = torch.tensor(b['path_indices'], dtype=torch.long)
 
             rels = b.get('path_rel_labels', [])
-            # Align length: rel labels is path_len-1
             for j, rel in enumerate(rels):
-                if j >= max_rel_len:
-                    break
-                path_rel_ids[i, j] = relation_id_map.get(rel, relation_id_map.get('nothing', 0))
+                if j >= max_rel_len: break
+                # rel might be int (RuleTaker dummy) or string (CLUTRR)
+                if isinstance(rel, int):
+                    path_rel_ids[i, j] = rel
+                else:
+                    path_rel_ids[i, j] = relation_id_map.get(rel, relation_id_map.get('nothing', 0))
             
             spans = b['node_spans'] 
             for j, s in enumerate(spans):
@@ -279,16 +529,43 @@ class NeSyCollator:
                     entity_spans[i, j, 0] = s[0]
                     entity_spans[i, j, 1] = s[1]
 
-            if 'aug_node_spans' in b:
-                aug_spans = b['aug_node_spans']
-                for j, s in enumerate(aug_spans):
-                    if s is not None:
-                        aug_entity_spans[i, j, 0] = s[0]
-                        aug_entity_spans[i, j, 1] = s[1]
+        # Augmented Encoding
+        enc_aug = None
+        if 'aug_story' in batch[0]:
+            # Always on-the-fly for augmentation to save massive storage/pre-calc
+            aug_stories = [b['aug_story'] for b in batch]
+            if 'aug_query_text_raw' in batch[0]:
+                 aug_queries = [b['aug_query_text_raw'] for b in batch]
+            else:
+                 if 'aug_query' in batch[0] and isinstance(batch[0]['aug_query'], (list, tuple)):
+                     aug_queries = [f"{b['aug_query'][0]} and {b['aug_query'][1]}" for b in batch]
+                 else:
+                     if 'query_text_raw' in batch[0]:
+                        aug_queries = [b['query_text_raw'] for b in batch]
+                     else:
+                        aug_queries = [f"{b['query'][0]} and {b['query'][1]}" for b in batch]
+
+            enc_aug = self.tokenizer(
+                aug_stories,
+                aug_queries,
+                padding=True,
+                truncation=True,
+                return_tensors='pt',
+                add_special_tokens=True
+            )
+            
+            # Aug spans filling
+            for i, b in enumerate(batch):
+                if 'aug_node_spans' in b:
+                    aug_spans = b['aug_node_spans']
+                    for j, s in enumerate(aug_spans):
+                        if s is not None:
+                            aug_entity_spans[i, j, 0] = s[0]
+                            aug_entity_spans[i, j, 1] = s[1]
         
-        return {
-            'input_ids': enc.input_ids,
-            'attention_mask': enc.attention_mask, 
+        result = {
+            'input_ids': input_ids,
+            'attention_mask': attention_mask, 
             'labels': targets,
             'hops': hops,
             'path_node_ids': path_node_ids, 
@@ -300,6 +577,7 @@ class NeSyCollator:
             'aug_attention_mask': enc_aug.attention_mask if enc_aug else None,
             'aug_entity_spans': aug_entity_spans if enc_aug else None
         }
+        return result
 
 
 class RelationConditionedEntityAttention(nn.Module):
@@ -308,9 +586,17 @@ class RelationConditionedEntityAttention(nn.Module):
         self.hidden_size = hidden_size
         self.num_relations = num_relations
 
+        # Global Head (Composition)
         self.q_proj = nn.Linear(hidden_size, hidden_size)
         self.k_proj = nn.Linear(hidden_size, hidden_size)
         self.v_proj = nn.Linear(hidden_size, hidden_size)
+
+        # Hop Head (Routing/Navigation)
+        self.q_hop = nn.Linear(hidden_size, hidden_size)
+        self.k_hop = nn.Linear(hidden_size, hidden_size)
+        self.v_hop = nn.Linear(hidden_size, hidden_size)
+        # Goal-conditioned component for hop query: q(u, obj) = q_hop(u) + q_obj(obj)
+        self.q_obj = nn.Linear(hidden_size, hidden_size, bias=False)
 
         self.rel_mlp = nn.Sequential(
             nn.Linear(hidden_size * 3, hidden_size),
@@ -318,10 +604,14 @@ class RelationConditionedEntityAttention(nn.Module):
             nn.Linear(hidden_size, num_relations),
         )
 
-        # Relation-conditioned FiLM on values: V_ij = V_j * (1+gamma_ij) + beta_ij
+        # Relation-conditioned FiLM on values
+        # Shared between heads to enforce consistent relation semantics
         self.rel_gamma = nn.Embedding(num_relations, hidden_size)
         self.rel_beta = nn.Embedding(num_relations, hidden_size)
-        self.rel_bias = nn.Parameter(torch.zeros(num_relations))
+        
+        # Attention Bias - Separate parameters to allow distinct connectivity patterns
+        self.rel_bias = nn.Parameter(torch.zeros(num_relations))      # Global
+        self.rel_bias_hop = nn.Parameter(torch.zeros(num_relations))  # Hop
 
         self.dropout = nn.Dropout(dropout)
         self.ln = nn.LayerNorm(hidden_size)
@@ -331,53 +621,88 @@ class RelationConditionedEntityAttention(nn.Module):
         feats = torch.cat([e_i, e_j, e_i * e_j], dim=-1)
         return self.rel_mlp(feats)
 
-    def forward(self, entity_embs: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        entity_embs: torch.Tensor,
+        valid_mask: torch.Tensor,
+        obj_indices: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         # entity_embs: (B, N, H)
         # valid_mask: (B, N) bool
         B, N, H = entity_embs.shape
 
         # Compute per-sample to avoid O(B*N^2*H) blowups from padding.
         out = torch.zeros_like(entity_embs)
+        
+        # Store Hop scores for supervision
+        batch_scores_hop = torch.full((B, N, N), -1e4, device=entity_embs.device, dtype=entity_embs.dtype)
+        
         for b in range(B):
             n_valid = int(valid_mask[b].sum().item())
             if n_valid <= 0:
                 continue
 
             E = entity_embs[b, :n_valid]  # (n, H)
-            q = self.q_proj(E)
-            k = self.k_proj(E)
-            v = self.v_proj(E)
-
-            # Pairwise relation logits: (n, n, R)
+            
+            # --- Common Relation Prediction ---
             e_i = E.unsqueeze(1).expand(n_valid, n_valid, H)
             e_j = E.unsqueeze(0).expand(n_valid, n_valid, H)
             feats = torch.cat([e_i, e_j, e_i * e_j], dim=-1)
             rel_logits = self.rel_mlp(feats)
             rel_probs = torch.softmax(rel_logits, dim=-1)
+            
+            # FiLM Parameters (Shared)
+            gamma = torch.matmul(rel_probs, self.rel_gamma.weight)
+            beta = torch.matmul(rel_probs, self.rel_beta.weight)
 
-            scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(H)  # (n, n)
-            scores = scores + torch.matmul(rel_probs, self.rel_bias)    # (n, n)
-
-            attn = torch.softmax(scores, dim=-1)
-            attn = self.dropout(attn)
-
-            gamma = torch.matmul(rel_probs, self.rel_gamma.weight)  # (n, n, H)
-            beta = torch.matmul(rel_probs, self.rel_beta.weight)    # (n, n, H)
-            v_expand = v.unsqueeze(0).expand(n_valid, n_valid, H)   # (n, n, H)
+            # --- 1. Global Head (Composition) ---
+            q = self.q_proj(E)
+            k = self.k_proj(E)
+            v = self.v_proj(E)
+            
+            scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(H)
+            scores = scores + torch.matmul(rel_probs, self.rel_bias)
+            attn = self.dropout(torch.softmax(scores, dim=-1))
+            
+            v_expand = v.unsqueeze(0).expand(n_valid, n_valid, H)
             v_cond = v_expand * (1.0 + gamma) + beta
+            msg_global = torch.sum(attn.unsqueeze(-1) * v_cond, dim=1)
 
-            msg = torch.sum(attn.unsqueeze(-1) * v_cond, dim=1)  # (n, H)
-            out[b, :n_valid] = self.ln(E + self.dropout(msg))
+            # --- 2. Hop Head (Routing) ---
+            q_h = self.q_hop(E)
+            if obj_indices is not None:
+                obj_idx = int(obj_indices[b].item())
+                if 0 <= obj_idx < n_valid:
+                    q_h = q_h + self.q_obj(E[obj_idx]).unsqueeze(0)
+            k_h = self.k_hop(E)
+            v_h = self.v_hop(E)
+            
+            scores_hop = torch.matmul(q_h, k_h.transpose(0, 1)) / math.sqrt(H)
+            scores_hop = scores_hop + torch.matmul(rel_probs, self.rel_bias_hop)
+            
+            # Save for supervision
+            batch_scores_hop[b, :n_valid, :n_valid] = scores_hop
+            
+            attn_hop = self.dropout(torch.softmax(scores_hop, dim=-1))
+            
+            v_h_expand = v_h.unsqueeze(0).expand(n_valid, n_valid, H)
+            v_h_cond = v_h_expand * (1.0 + gamma) + beta # Reuse FiLM for consistency
+            msg_hop = torch.sum(attn_hop.unsqueeze(-1) * v_h_cond, dim=1)
 
-        return out
+            # --- Fusion ---
+            # Inject both messages into the update
+            out[b, :n_valid] = self.ln(E + self.dropout(msg_global + msg_hop))
+
+        return out, batch_scores_hop
 
 # ==========================================
 # 2. NeSy Transformer Model
 # ==========================================
 class NeSyRoBERTa(nn.Module):
-    def __init__(self, device, tokenizer, model_type="roberta"):
+    def __init__(self, device, tokenizer, model_type="roberta", num_labels=21, num_relations=21):
         super().__init__()
         self.device = device
+        self.num_labels = num_labels
         
         self.model_type = model_type.lower()
         if self.model_type == "roberta":
@@ -406,31 +731,26 @@ class NeSyRoBERTa(nn.Module):
         self.hidden_size = self.encoder.config.hidden_size
         
         # Heads
-        self.classifier = nn.Linear(self.hidden_size, 21) # 21 relations
+        self.classifier = nn.Linear(self.hidden_size, num_labels) 
 
         # Compositionality-aware: relation-conditioned entity attention + query-pair head
         self.entity_attn = RelationConditionedEntityAttention(
             hidden_size=self.hidden_size,
-            num_relations=21,
+            num_relations=num_relations,
             dropout=0.1,
         )
         self.pair_classifier = nn.Sequential(
             nn.Linear(self.hidden_size * 3, self.hidden_size),
             nn.ReLU(),
-            nn.Linear(self.hidden_size, 21),
+            nn.Linear(self.hidden_size, num_labels),
         )
-        
-        # Next-Hop Prediction
-        # We use a query-key mechanism.
-        # Query: Current Node Embedding -> Transform -> Match with Candidate Embeddings
-        self.hop_proj = nn.Linear(self.hidden_size, self.hidden_size)
         
         # Intermediate Relation Prediction (Optional)
         # Concatenate (E_i, E_i+1) -> Rel
         self.rel_proj = nn.Sequential(
             nn.Linear(self.hidden_size * 2, self.hidden_size),
             nn.ReLU(),
-            nn.Linear(self.hidden_size, 21) # Same relation space
+            nn.Linear(self.hidden_size, num_relations) # Relation space
         )
         
     def get_entity_embeddings(self, last_hidden_state, entity_spans):
@@ -462,7 +782,13 @@ class NeSyRoBERTa(nn.Module):
                     sample_embs.append(pool)
                 else:
                     sample_embs.append(torch.zeros(self.hidden_size).to(self.device))
-            emb_list.append(torch.stack(sample_embs))
+            
+            if len(sample_embs) == 0:
+                 # Handle case where N_ent=0 (batch has no entities)
+                 # Return empty 0xH tensor
+                 emb_list.append(torch.zeros(0, self.hidden_size).to(self.device))
+            else:
+                 emb_list.append(torch.stack(sample_embs))
             
         return torch.stack(emb_list) # (B, N_ent, H)
 
@@ -474,7 +800,9 @@ class NeSyRoBERTa(nn.Module):
 
         entity_embs = self.get_entity_embeddings(sequence_output, entity_spans)
         valid_mask = (entity_spans[:, :, 0] != -1)
-        entity_embs_upd = self.entity_attn(entity_embs, valid_mask)
+        # Returns: (updated_embs, attn_scores)
+        obj_indices = query_indices[:, 1]
+        entity_embs_upd, attn_scores = self.entity_attn(entity_embs, valid_mask, obj_indices=obj_indices)
 
         sub_idx = query_indices[:, 0].clamp(min=0)
         obj_idx = query_indices[:, 1].clamp(min=0)
@@ -484,8 +812,10 @@ class NeSyRoBERTa(nn.Module):
         pair_feats = torch.cat([e_sub, e_obj, e_sub * e_obj], dim=-1)
         logits_pair = self.pair_classifier(pair_feats)
 
+        # Fusion: direct sum
         logits = logits_cls + logits_pair
-        return logits, entity_embs_upd
+        
+        return logits, entity_embs_upd, attn_scores
 
     def forward(self, batch_data, lambda1=1.0, lambda_cons=0.0, lambda_rel=1.0):
         # Unpack
@@ -498,7 +828,7 @@ class NeSyRoBERTa(nn.Module):
         query_indices = batch_data['query_indices']
         
         # 1. Forward (Original)
-        logits_orig, entity_embs_upd = self.compute_logits(
+        logits_orig, entity_embs_upd, attn_scores = self.compute_logits(
             input_ids=input_ids,
             attention_mask=attention_mask,
             entity_spans=entity_spans,
@@ -510,7 +840,7 @@ class NeSyRoBERTa(nn.Module):
         cons_loss = torch.tensor(0.0).to(self.device)
         if batch_data.get('aug_input_ids') is not None:
             # Forward Augmented (same architecture)
-            logits_aug, _ = self.compute_logits(
+            logits_aug, _, _ = self.compute_logits(
                 input_ids=batch_data['aug_input_ids'],
                 attention_mask=batch_data['aug_attention_mask'],
                 entity_spans=batch_data['aug_entity_spans'],
@@ -553,11 +883,18 @@ class NeSyRoBERTa(nn.Module):
             input_indices = valid_path[:-1]
             target_indices = valid_path[1:]
             
-            curr_embs = sample_ent_embs[input_indices]
-            queries = self.hop_proj(curr_embs)
-            scores = torch.matmul(queries, sample_ent_embs.transpose(0, 1))
+            # Revised Next-Hop Logic:
+            # Instead of hop_proj, we use the attention scores from `RelationConditionedEntityAttention`.
+            # attn_scores[i] is (N, N). We want scores from node u to all other nodes.
+            # The "logit" for node v is score(u, v).
             
-            step_loss = nn.functional.cross_entropy(scores, target_indices)
+            # Get the row of scores for each node u in the path
+            # slice: [input_indices, :] -> (Steps, N)
+            step_logits = attn_scores[i, input_indices, :]
+            
+            # Target is the index of node v.
+            step_loss = nn.functional.cross_entropy(step_logits, target_indices)
+            
             batch_nexthop_loss += step_loss
             total_hops += 1
             
@@ -604,7 +941,7 @@ class NeSyRoBERTa(nn.Module):
                 'main': main_loss.item(), 
                 'nexthop': loss_nexthop.item(),
                 'cons': cons_loss.item(),
-                'rel': loss_rel.item(),
+                'rel': loss_rel.item()
             },
             'logits': logits_orig
         }
@@ -625,7 +962,8 @@ def run_training():
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate")
     parser.add_argument("--batch_size", type=int, default=16, help="Train batch size (per process for DDP)")
     parser.add_argument("--eval_batch_size", type=int, default=32, help="Eval batch size (per process for DDP; eval runs on rank0 only)")
-    parser.add_argument("--num_workers", type=int, default=0, help="DataLoader num_workers")
+    parser.add_argument("--num_workers", type=int, default=12, help="DataLoader num_workers")
+    parser.add_argument("--dataset", type=str, default="clutrr", choices=["clutrr", "ruletaker"], help="Dataset to use")
     parser.add_argument(
         "--gpus",
         type=str,
@@ -639,6 +977,12 @@ def run_training():
         choices=["single", "dp", "ddp"],
         help="single=单卡；dp=DataParallel；ddp=DistributedDataParallel(推荐，多进程同步)",
     )
+    # RuleTaker Specific Arguments
+    parser.add_argument("--ruletaker_root", type=str, default="data/rule-reasoning-dataset-V2020.2.5.0/original")
+    parser.add_argument("--ruletaker_train_depths", type=str, default="1,2", help="Comma separated depths for training, e.g. '0,1,2'")
+    parser.add_argument("--ruletaker_test_depths", type=str, default="0,1,2,3,4,5", help="Comma separated depths for testing")
+    parser.add_argument("--ruletaker_extra_test_depths", type=str, default=None, help="Extra depths e.g. '3ext,3ext-NatLang'")
+    
     args = parser.parse_args()
 
     # IMPORTANT: set visible devices BEFORE any CUDA usage
@@ -657,6 +1001,7 @@ def run_training():
     if _is_main_process():
         print(f"Device: {device}")
         print(f"Selected Model: {args.model_type}")
+        print(f"Dataset: {args.dataset}")
         print(f"GPU Visible (CUDA_VISIBLE_DEVICES): {os.environ.get('CUDA_VISIBLE_DEVICES', '')}")
         print(f"Strategy: {args.strategy} (rank={rank}, world_size={world_size}, local_rank={local_rank})")
     
@@ -681,28 +1026,70 @@ def run_training():
     else:
         raise ValueError(f"Unknown model type: {args.model_type}")
     
-    root = "data"
-    dset = "data_089907f8"
+    # Config per dataset
+    test_loaders = {} # Dictionary for RuleTaker multi-depth eval
     
-    print("Loading Data (Augmentation Enabled)...")
-    train_ds = NeSyCLUTRRDataset(root, dset, "train", 100, tokenizer=tokenizer, augment=True)
-    # Filter Nones
-    train_ds.data = [d for d in train_ds.data if d is not None] 
+    if args.dataset == "clutrr":
+        num_labels = 21 # Relations
+        num_latent_relations = 21
+        root = "data"
+        dset = "data_089907f8"
+        print("Loading CLUTRR Data (Augmentation Enabled)...")
+        train_ds = NeSyCLUTRRDataset(root, dset, "train", 100, tokenizer=tokenizer, augment=True)
+        test_ds = NeSyCLUTRRDataset(root, dset, "test", 100, tokenizer=tokenizer, augment=True, augment_seed=999)
+        test_loaders['default'] = DataLoader(test_ds, batch_size=args.eval_batch_size, shuffle=False, collate_fn=NeSyCollator(tokenizer), num_workers=args.num_workers)
+
+    elif args.dataset == "ruletaker":
+        num_labels = 2 # Entailment vs Not
+        num_latent_relations = 21 # Internal slots
+        
+        # Check local path
+        local_path = args.ruletaker_root
+        
+        if os.path.exists(local_path):
+             # Train Set
+             train_depths = args.ruletaker_train_depths.split(",") if args.ruletaker_train_depths else None
+             if train_depths: train_depths = [d.strip() for d in train_depths if d.strip()]
+             
+             print(f"Loading RuleTaker TRAIN from {local_path}...")
+             train_ds = NeSyRuleTakerDataset("train", tokenizer=tokenizer, augment=True, dataset_dir=local_path, depths=train_depths)
+             
+             # Test Sets (Multi-depth)
+             test_depth_list = args.ruletaker_test_depths.split(",") if args.ruletaker_test_depths else []
+             if args.ruletaker_extra_test_depths:
+                 test_depth_list += args.ruletaker_extra_test_depths.split(",")
+             
+             test_depth_list = [d.strip() for d in test_depth_list if d.strip()]
+             
+             print(f"Loading RuleTaker TEST Sets: {test_depth_list}...")
+             for d in test_depth_list:
+                 ds_name = f"depth-{d}"
+                 ds = NeSyRuleTakerDataset("test", tokenizer=tokenizer, augment=True, augment_seed=999, dataset_dir=local_path, depths=[d])
+                 if len(ds) > 0:
+                     test_loaders[ds_name] = DataLoader(
+                        ds,
+                        batch_size=args.eval_batch_size,
+                        shuffle=False,
+                        collate_fn=NeSyCollator(tokenizer),
+                        num_workers=args.num_workers,
+                        pin_memory=True
+                     )
+                 else:
+                     print(f" [Warn] Skipping empty test depth: {d}")
+                     
+        else:
+             print("[Warn] Local RuleTaker path not found, falling back to HF (ignoring depth args)...")
+             train_ds = NeSyRuleTakerDataset("train", tokenizer=tokenizer, augment=True)
+             test_ds = NeSyRuleTakerDataset("test", tokenizer=tokenizer, augment=True, augment_seed=999)
+             test_loaders['default'] = DataLoader(test_ds, batch_size=args.eval_batch_size, shuffle=False, collate_fn=NeSyCollator(tokenizer), num_workers=args.num_workers)
+     
+    # Filter Nones (if NeSyCLUTRRDataset returns Nones)
+    # NeSyRuleTakerDataset doesn't return Nones in current impl
+    if hasattr(train_ds, 'data') and isinstance(train_ds.data, list):
+         train_ds.data = [d for d in train_ds.data if d is not None] 
+
     
-    
-    # Use NeSy test loader so entity spans / path rels are available for the new architecture
-    test_ds = NeSyCLUTRRDataset(
-        root,
-        dset,
-        "test",
-        100,
-        tokenizer=tokenizer,
-        augment=True,
-        augment_seed=999,
-    )
-    test_ds.data = [d for d in test_ds.data if d is not None]
-    
-    collator = NeSyCollator(tokenizer, device)
+    collator = NeSyCollator(tokenizer)
 
     if args.strategy == "ddp":
         train_sampler = DistributedSampler(train_ds, num_replicas=world_size, rank=rank, shuffle=True)
@@ -714,16 +1101,10 @@ def run_training():
             sampler=train_sampler,
             collate_fn=collator,
             num_workers=args.num_workers,
-            pin_memory=True,
+            pin_memory=True, # Optimized
         )
-        test_loader = DataLoader(
-            test_ds,
-            batch_size=args.eval_batch_size,
-            shuffle=False,
-            collate_fn=collator,
-            num_workers=args.num_workers,
-            pin_memory=True,
-        )
+        # DDP mode: Test loaders logic is handled above, but here we don't need sampler for eval
+        # Just use what we created in test_loaders dict
     else:
         train_loader = DataLoader(
             train_ds,
@@ -731,17 +1112,19 @@ def run_training():
             shuffle=True,
             collate_fn=collator,
             num_workers=args.num_workers,
+            pin_memory=True,
+            persistent_workers=True if args.num_workers > 0 else False
         )
-        test_loader = DataLoader(
-            test_ds,
-            batch_size=args.eval_batch_size,
-            shuffle=False,
-            collate_fn=collator,
-            num_workers=args.num_workers,
-        )
+        # Test loaders already created above
     
     # 2. Model
-    model = NeSyRoBERTa(device, tokenizer, model_type=args.model_type).to(device)
+    model = NeSyRoBERTa(
+        device, 
+        tokenizer, 
+        model_type=args.model_type,
+        num_labels=num_labels,
+        num_relations=num_latent_relations
+    ).to(device)
 
     if args.strategy == "dp":
         if not torch.cuda.is_available():
@@ -758,14 +1141,27 @@ def run_training():
             model,
             device_ids=[local_rank],
             output_device=local_rank,
-            find_unused_parameters=False,
+            # find_unused_parameters=True prevents crash when some layers (e.g. rel_mlp) 
+            # are not used in a specific dataset (RuleTaker has no rel labels)
+            find_unused_parameters=True, 
         )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    scaler = torch.amp.GradScaler('cuda') # AMP Scaler
     
+    def recursive_to_device(obj, device, non_blocking=False):
+        if torch.is_tensor(obj):
+            return obj.to(device, non_blocking=non_blocking)
+        elif isinstance(obj, dict):
+            return {k: recursive_to_device(v, device, non_blocking=non_blocking) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [recursive_to_device(v, device, non_blocking=non_blocking) for v in obj]
+        else:
+            return obj
+
     # 3. Loop
     epochs = args.epochs 
     
-    print("Starting Training (Scheme A + B)...")
+    print("Starting Training (Scheme A + B) with AMP...")
     for epoch in range(epochs):
         if args.strategy == "ddp":
             # type: ignore[name-defined]
@@ -780,18 +1176,26 @@ def run_training():
         for batch in pbar:
             if batch is None: continue
 
+            # Move to device with non_blocking=True (since pinned memory)
+            batch = recursive_to_device(batch, device, non_blocking=True)
+
             # Avoid DataParallel scatter issues with non-tensor fields
             batch_for_model = dict(batch)
             if "raw_batch" in batch_for_model:
                 batch_for_model.pop("raw_batch")
             
             optimizer.zero_grad()
-            # lambda1 (NextHop) = 1.0, lambda_cons (Consistency) = 5.0，lambda_rel=1.0
-            out = model(batch_for_model, lambda1=1.0, lambda_cons=5.0, lambda_rel=1.0)
             
-            loss = out['loss']
-            loss.backward()
-            optimizer.step()
+            # AMP Context
+            with torch.amp.autocast('cuda'):
+                # lambda1 (NextHop) = 1.0, lambda_cons (Consistency) = 5.0，lambda_rel=1.0
+                out = model(batch_for_model, lambda1=1.0, lambda_cons=5.0, lambda_rel=1.0)
+                loss = out['loss']
+            
+            # Scaler Backward
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             
             total_loss += loss.item()
             accum_aux += out['losses']['nexthop']
@@ -814,19 +1218,88 @@ def run_training():
         
         # 4. Evaluation
         if _is_main_process():
-            print(f"--> Evaluating Robustness Epoch {epoch+1}...")
-            metrics = evaluate_robustness(model, test_loader, device)
-            
-            print(f"  Overall Acc (Base):   {metrics['overall']:.4f}")
-            print(f"  Renamed Acc (Mod):    {metrics['renamed']:.4f}")
-            print(f"  Consistency:          {metrics['consistency']:.4f}")
-            print(f"  Consistent & Correct: {metrics['consistent_and_correct']:.4f}")
-            print(f"  Short Hop (2-3):      {metrics['short_hop']:.4f}")
-            print(f"  Long Hop (>=6):       {metrics['long_hop']:.4f}")
+            if args.dataset == "ruletaker":
+                evaluate_ruletaker_suite(model, test_loaders, device)
+            else:
+                print(f"--> Evaluating Robustness Epoch {epoch+1}...")
+                metrics = evaluate_robustness(model, test_loaders['default'], device)
+                
+                print(f"  Overall Acc (Base):   {metrics['overall']:.4f}")
+                print(f"  Renamed Acc (Mod):    {metrics['renamed']:.4f}")
+                print(f"  Consistency:          {metrics['consistency']:.4f}")
+                print(f"  Consistent & Correct: {metrics['consistent_and_correct']:.4f}")
+                print(f"  Short Hop (2-3):      {metrics['short_hop']:.4f}")
+                print(f"  Long Hop (>=6):       {metrics['long_hop']:.4f}")
 
     if args.strategy == "ddp" and _is_distributed():
         dist.barrier()
         dist.destroy_process_group()
+
+
+def evaluate_ruletaker(model, loader, device):
+    model.eval()
+    base_model = _unwrap_model(model)
+    
+    total = 0
+    correct = 0
+    
+    def recursive_to_device(obj, device):
+        if torch.is_tensor(obj):
+            return obj.to(device)
+        elif isinstance(obj, dict):
+            return {k: recursive_to_device(v, device) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [recursive_to_device(v, device) for v in obj]
+        else:
+            return obj
+
+    with torch.no_grad():
+        for batch in tqdm(loader, desc="Eval RuleTaker", leave=False):
+            if batch is None:
+                continue
+            
+            # 手动移到 device (因为 collate 可能返回 cpu)
+            batch = recursive_to_device(batch, device)
+            
+            input_ids = batch['input_ids']
+            attention_mask = batch['attention_mask']
+            labels = batch['labels']
+            
+            # 只走 Forward / CLS Logits (Skip NeSy path to avoid empty entity crashes)
+            out = base_model.encoder(input_ids=input_ids, attention_mask=attention_mask)
+            sequence_output = out.last_hidden_state
+            cls_output = sequence_output[:, 0, :]
+            logits = base_model.classifier(cls_output)
+            
+            preds = torch.argmax(logits, dim=1)
+            correct += (preds == labels).sum().item()
+            total += len(labels)
+    
+    acc = correct / total if total > 0 else 0
+    return {"overall": acc, "total": total}
+
+
+def evaluate_ruletaker_suite(model, loaders_dict, device):
+    print(f"--> Evaluating RuleTaker Suite...")
+    results = {}
+    total_samples = 0
+    weighted_acc = 0.0
+    
+    for name, loader in loaders_dict.items():
+        metrics = evaluate_ruletaker(model, loader, device)
+        acc = metrics['overall']
+        n = metrics['total']
+        results[name] = acc
+        print(f"  {name}: {acc:.4f} (n={n})")
+        
+        weighted_acc += acc * n
+        total_samples += n
+        
+    macro = sum(results.values()) / len(results) if results else 0
+    micro = weighted_acc / total_samples if total_samples > 0 else 0
+    print(f"  [Summary] Macro Avg: {macro:.4f}, Micro Avg: {micro:.4f}")
+    return {"overall": micro}
+
 
 def evaluate_robustness(model, loader, device):
     model.eval()
@@ -845,15 +1318,28 @@ def evaluate_robustness(model, loader, device):
     by_hop_total = {}
     by_hop_correct = {}
     
+    def recursive_to_device(obj, device):
+        if torch.is_tensor(obj):
+            return obj.to(device)
+        elif isinstance(obj, dict):
+            return {k: recursive_to_device(v, device) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [recursive_to_device(v, device) for v in obj]
+        else:
+            return obj
+
     with torch.no_grad():
         for batch in loader:
             if batch is None:
                 continue
 
+            # Move to device manually since collator returns CPU tensors now
+            batch = recursive_to_device(batch, device)
+            
             y_target = batch['labels']
             hops = batch['hops']
 
-            logits_base, _ = base_model.compute_logits(
+            logits_base, _, _, _ = base_model.compute_logits(
                 input_ids=batch['input_ids'],
                 attention_mask=batch['attention_mask'],
                 entity_spans=batch['entity_spans'],
@@ -861,7 +1347,7 @@ def evaluate_robustness(model, loader, device):
             )
             preds_base = torch.argmax(logits_base, dim=1)
 
-            logits_mod, _ = base_model.compute_logits(
+            logits_mod, _, _, _ = base_model.compute_logits(
                 input_ids=batch['aug_input_ids'],
                 attention_mask=batch['aug_attention_mask'],
                 entity_spans=batch['aug_entity_spans'],
@@ -870,11 +1356,20 @@ def evaluate_robustness(model, loader, device):
             preds_mod = torch.argmax(logits_mod, dim=1)
 
             # Changed rates from raw_batch
-            for b in batch['raw_batch']:
+            for b_idx, b in enumerate(batch['raw_batch']):
+                if 'query' in b:
+                    query_text = f"{b['query'][0]} and {b['query'][1]}"
+                else:
+                    query_text = b.get('query_text_raw', '')
+
                 story_text = b['story']
-                query_text = f"{b['query'][0]} and {b['query'][1]}"
                 story_mod = b.get('aug_story', story_text)
-                query_mod = f"{b.get('aug_query', b['query'])[0]} and {b.get('aug_query', b['query'])[1]}"
+                
+                if 'aug_query' in b:
+                    query_mod = f"{b['aug_query'][0]} and {b['aug_query'][1]}"
+                else:
+                    query_mod = b.get('aug_query_text_raw', query_text)
+
                 if story_mod != story_text:
                     count_changed_story += 1
                 if query_mod != query_text:
