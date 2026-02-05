@@ -476,7 +476,7 @@ class NeSyCollator:
         
         if is_pre_tokenized:
             input_ids = pad_sequence([b['input_ids'] for b in batch], batch_first=True, padding_value=self.tokenizer.pad_token_id)
-            attention_mask = pad_sequence([b['attention_mask'] for b in batch], batch_first=True, padding_value=0)
+            attention_mask = pad_sequence([b['attention_mask'] for b in batch], batch_first=True, padding_value=0).bool()
         else:
             stories = [b['story'] for b in batch]
             if 'query_text_raw' in batch[0]:
@@ -493,7 +493,7 @@ class NeSyCollator:
                 add_special_tokens=True
             )
             input_ids = enc.input_ids
-            attention_mask = enc.attention_mask
+            attention_mask = enc.attention_mask.bool()
 
         targets = torch.tensor([b['target_id'] for b in batch], dtype=torch.long)
         hops = torch.tensor([b['hops'] for b in batch], dtype=torch.long)
@@ -553,6 +553,7 @@ class NeSyCollator:
                 return_tensors='pt',
                 add_special_tokens=True
             )
+            enc_aug.attention_mask = enc_aug.attention_mask.bool()
             
             # Aug spans filling
             for i, b in enumerate(batch):
@@ -793,7 +794,13 @@ class NeSyRoBERTa(nn.Module):
         return torch.stack(emb_list) # (B, N_ent, H)
 
     def compute_logits(self, input_ids, attention_mask, entity_spans, query_indices):
-        out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
+        attention_mask = attention_mask.bool()
+        if "deberta" in self.model_type:
+            # Avoid AMP overflow in DeBERTa masked_fill with large negative values
+            with torch.amp.autocast('cuda', enabled=False):
+                out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
+        else:
+            out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
         sequence_output = out.last_hidden_state
         cls_output = sequence_output[:, 0, :]
         logits_cls = self.classifier(cls_output)
@@ -980,8 +987,8 @@ def run_training():
     # RuleTaker Specific Arguments
     parser.add_argument("--ruletaker_root", type=str, default="data/rule-reasoning-dataset-V2020.2.5.0/original")
     parser.add_argument("--ruletaker_train_depths", type=str, default="1,2", help="Comma separated depths for training, e.g. '0,1,2'")
-    parser.add_argument("--ruletaker_test_depths", type=str, default="0,1,2,3,4,5", help="Comma separated depths for testing")
-    parser.add_argument("--ruletaker_extra_test_depths", type=str, default=None, help="Extra depths e.g. '3ext,3ext-NatLang'")
+    parser.add_argument("--ruletaker_test_depths", type=str, default="0,1,2,3,5", help="Comma separated depths for testing")
+    parser.add_argument("--ruletaker_extra_test_depths", type=str, default='3ext,3ext-NatLang', help="Extra depths e.g. '3ext,3ext-NatLang'")
     
     args = parser.parse_args()
 
@@ -1172,7 +1179,7 @@ def run_training():
         accum_aux = 0
         accum_cons = 0
         
-        pbar = tqdm(train_loader, desc=f"Ep {epoch+1}")
+        pbar = tqdm(train_loader, desc=f"Ep {epoch+1}", ascii=True, dynamic_ncols=True)
         for batch in pbar:
             if batch is None: continue
 
