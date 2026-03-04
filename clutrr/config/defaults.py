@@ -1,0 +1,4 @@
+"""CLUTRR defaults."""
+
+DEFAULT_CLUTRR_ROOT = "data"
+DEFAULT_CLUTRR_DATASET = "data_089907f8"
