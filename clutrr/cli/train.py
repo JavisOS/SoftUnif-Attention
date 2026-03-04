@@ -1,9 +1,11 @@
 import argparse
 import os
+from pathlib import Path
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+import yaml
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
@@ -22,51 +24,130 @@ from clutrr.config.defaults import DEFAULT_CLUTRR_DATASET, DEFAULT_CLUTRR_ROOT
 from clutrr.utils.seed import set_seed
 
 
-def build_arg_parser():
+BASE_TRAIN_DEFAULTS = {
+    "model_type": "deberta",
+    "epochs": 10,
+    "lr": 2e-5,
+    "batch_size": 16,
+    "eval_batch_size": 32,
+    "num_workers": 0,
+    "root": DEFAULT_CLUTRR_ROOT,
+    "dataset": DEFAULT_CLUTRR_DATASET,
+    "gpus": "0",
+    "strategy": "single",
+    "seed": 42,
+    "lambda_nexthop": 1.0,
+    "lambda_consistency": 5.0,
+}
+
+
+def _extract_config_path(argv=None):
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--config", type=str, default=None)
+    args, _ = parser.parse_known_args(argv)
+    return args.config
+
+
+def _load_yaml_config(config_path: str | None) -> dict:
+    if not config_path:
+        return {}
+
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    with path.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Config must be a YAML mapping/dict: {config_path}")
+    return data
+
+
+def build_arg_parser(defaults=None):
+    defaults = defaults or BASE_TRAIN_DEFAULTS
     parser = argparse.ArgumentParser(
         prog="python -m clutrr.cli.train",
         description="Train TSRA model on CLUTRR only.",
     )
     parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="YAML config path. CLI args override YAML values.",
+    )
+    parser.add_argument(
         "--model_type",
         type=str,
-        default="deberta",
+        default=defaults["model_type"],
         choices=["roberta", "roberta-large", "deberta", "deberta-v3", "deberta-v3-large", "bert", "modernbert"],
         help="Model backbone type",
     )
-    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
-    parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate")
-    parser.add_argument("--batch_size", type=int, default=16, help="Train batch size (per process for DDP)")
+    parser.add_argument("--epochs", type=int, default=defaults["epochs"], help="Number of training epochs")
+    parser.add_argument("--lr", type=float, default=defaults["lr"], help="Learning rate")
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=defaults["batch_size"],
+        help="Train batch size (per process for DDP)",
+    )
     parser.add_argument(
         "--eval_batch_size",
         type=int,
-        default=32,
+        default=defaults["eval_batch_size"],
         help="Eval batch size (per process for DDP; eval runs on rank0 only)",
     )
-    parser.add_argument("--num_workers", type=int, default=0, help="DataLoader num_workers")
-    parser.add_argument("--root", type=str, default=DEFAULT_CLUTRR_ROOT, help="Data root directory")
-    parser.add_argument("--dataset", type=str, default=DEFAULT_CLUTRR_DATASET, help="Dataset folder name")
+    parser.add_argument("--num_workers", type=int, default=defaults["num_workers"], help="DataLoader num_workers")
+    parser.add_argument("--root", type=str, default=defaults["root"], help="Data root directory")
+    parser.add_argument("--dataset", type=str, default=defaults["dataset"], help="Dataset folder name")
     parser.add_argument(
         "--gpus",
         type=str,
-        default="0",
+        default=defaults["gpus"],
         help="选择可见 GPU，例如 '0' 或 '0,1,2,3'。脚本会设置 CUDA_VISIBLE_DEVICES。",
     )
     parser.add_argument(
         "--strategy",
         type=str,
-        default="single",
+        default=defaults["strategy"],
         choices=["single", "dp", "ddp"],
         help="single=单卡；dp=DataParallel；ddp=DistributedDataParallel(推荐，多进程同步)",
+    )
+    parser.add_argument("--seed", type=int, default=defaults["seed"], help="Random seed")
+    parser.add_argument(
+        "--lambda_nexthop",
+        type=float,
+        default=defaults["lambda_nexthop"],
+        help="Weight for next-hop supervision loss",
+    )
+    parser.add_argument(
+        "--lambda_consistency",
+        type=float,
+        default=defaults["lambda_consistency"],
+        help="Weight for consistency regularization loss",
     )
     return parser
 
 
+def parse_training_args():
+    config_path = _extract_config_path()
+    defaults = dict(BASE_TRAIN_DEFAULTS)
+
+    yaml_config = _load_yaml_config(config_path)
+    unknown_keys = sorted(set(yaml_config.keys()) - set(defaults.keys()))
+    if unknown_keys:
+        raise ValueError(f"Unknown config keys in {config_path}: {', '.join(unknown_keys)}")
+    defaults.update(yaml_config)
+
+    parser = build_arg_parser(defaults=defaults)
+    return parser.parse_args()
+
+
 def run_training():
-    args = build_arg_parser().parse_args()
+    args = parse_training_args()
 
     if args.gpus is not None:
-        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpus)
 
     if args.strategy == "ddp":
         rank, world_size, local_rank = setup_ddp(
@@ -78,7 +159,7 @@ def run_training():
         rank, world_size, local_rank = 0, 1, 0
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    set_seed(42)
+    set_seed(args.seed)
     if _is_main_process():
         print(f"Device: {device}")
         print(f"Selected Model: {args.model_type}")
@@ -183,7 +264,11 @@ def run_training():
                 batch_for_model.pop("raw_batch")
 
             optimizer.zero_grad()
-            out = model(batch_for_model, lambda1=1.0, lambda_cons=5.0)
+            out = model(
+                batch_for_model,
+                lambda1=args.lambda_nexthop,
+                lambda_cons=args.lambda_consistency,
+            )
 
             loss = out["loss"]
             loss.backward()

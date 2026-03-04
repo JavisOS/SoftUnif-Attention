@@ -1,8 +1,11 @@
 import os
 import argparse
+import random
+from pathlib import Path
 import torch
 import torch.nn as nn
 import numpy as np
+import yaml
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from datasets import load_dataset
@@ -10,6 +13,52 @@ from datasets import load_dataset
 from ruletaker.utils.distributed import is_main_process as _is_main_process
 from ruletaker.models.backbones import build_ruletaker_encoder, build_ruletaker_tokenizer
 from ruletaker.config.defaults import DEFAULT_RULETAKER_ROOT
+
+
+RULETAKER_TRAIN_DEFAULTS = {
+    "model_type": "roberta",
+    "epochs": 10,
+    "batch_size": 32,
+    "lr": 2e-5,
+    "root": DEFAULT_RULETAKER_ROOT,
+    "gpus": "0",
+    "limit": None,
+    "train_depth": "depth-1,depth-2",
+    "eval_depths": "depth-0,depth-1,depth-2,depth-3,depth-5",
+    "eval_on_train": False,
+    "max_length": 512,
+    "seed": 42,
+}
+
+
+def _extract_config_path(argv=None):
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--config", type=str, default=None)
+    args, _ = parser.parse_known_args(argv)
+    return args.config
+
+
+def _load_yaml_config(config_path: str | None) -> dict:
+    if not config_path:
+        return {}
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    with path.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Config must be a YAML mapping/dict: {config_path}")
+    return data
+
+
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 
 # ==========================================
 # 1. New RuleTaker Dataset Wrapper
@@ -170,34 +219,68 @@ def parse_depths(depths):
     return [d.strip() for d in depths.split(",") if d.strip()]
 
 
-def build_arg_parser():
+def build_arg_parser(defaults=None, prog="python -m ruletaker.cli.train", description="Train on RuleTaker only."):
+    defaults = defaults or RULETAKER_TRAIN_DEFAULTS
     parser = argparse.ArgumentParser(
-        prog="python -m ruletaker.cli.train",
-        description="Train on RuleTaker only.",
+        prog=prog,
+        description=description,
     )
-    parser.add_argument("--model_type", type=str, default="roberta")
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--lr", type=float, default=2e-5)
-    parser.add_argument("--root", type=str, default=DEFAULT_RULETAKER_ROOT, help="RuleTaker data root.")
-    parser.add_argument("--gpus", type=str, default="1")
-    parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--train_depth", type=str, default="depth-1,depth-2", help="e.g., depth-1,depth-2 or all")
-    parser.add_argument("--eval_depths", type=str, default="depth-0,depth-1,depth-2,depth-3,depth-5", help="e.g., depth-0,depth-1,depth-2,depth-3,depth-3ext,depth-5 or all")
-    parser.add_argument("--eval_on_train", action="store_true", help="Use training split for evaluation (sanity check/overfit)")
-    parser.add_argument("--max_length", type=int, default=512)
+    parser.add_argument("--config", type=str, default=None, help="YAML config path. CLI args override YAML values.")
+    parser.add_argument("--model_type", type=str, default=defaults["model_type"])
+    parser.add_argument("--epochs", type=int, default=defaults["epochs"])
+    parser.add_argument("--batch_size", type=int, default=defaults["batch_size"])
+    parser.add_argument("--lr", type=float, default=defaults["lr"])
+    parser.add_argument("--root", type=str, default=defaults["root"], help="RuleTaker data root.")
+    parser.add_argument("--gpus", type=str, default=defaults["gpus"])
+    parser.add_argument("--limit", type=int, default=defaults["limit"])
+    parser.add_argument(
+        "--train_depth",
+        type=str,
+        default=defaults["train_depth"],
+        help="e.g., depth-1,depth-2 or all",
+    )
+    parser.add_argument(
+        "--eval_depths",
+        type=str,
+        default=defaults["eval_depths"],
+        help="e.g., depth-0,depth-1,depth-2,depth-3,depth-3ext,depth-5 or all",
+    )
+    parser.add_argument(
+        "--eval_on_train",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["eval_on_train"],
+        help="Use training split for evaluation (sanity check/overfit)",
+    )
+    parser.add_argument("--max_length", type=int, default=defaults["max_length"])
+    parser.add_argument("--seed", type=int, default=defaults["seed"])
     return parser
 
 
 # ==========================================
 # 3. Training Loop (Adapted)
 # ==========================================
-def run_training():
-    args = build_arg_parser().parse_args()
+def parse_training_args(prog="python -m ruletaker.cli.train", description="Train on RuleTaker only."):
+    config_path = _extract_config_path()
+    defaults = dict(RULETAKER_TRAIN_DEFAULTS)
+
+    yaml_config = _load_yaml_config(config_path)
+    unknown_keys = sorted(set(yaml_config.keys()) - set(defaults.keys()))
+    if unknown_keys:
+        raise ValueError(f"Unknown config keys in {config_path}: {', '.join(unknown_keys)}")
+    defaults.update(yaml_config)
+
+    parser = build_arg_parser(defaults=defaults, prog=prog, description=description)
+    return parser.parse_args()
+
+
+def run_training(prog="python -m ruletaker.cli.train", description="Train on RuleTaker only."):
+    args = parse_training_args(prog=prog, description=description)
 
     # GPU Setup
     if args.gpus:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
+
+    set_seed(args.seed)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")

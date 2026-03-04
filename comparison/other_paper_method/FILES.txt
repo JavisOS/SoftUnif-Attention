@@ -1,6 +1,5 @@
 comparison/other_paper_method/code
 comparison/other_paper_method/code/analysis/baseline_roberta_analysis.py
-comparison/other_paper_method/code/cli/baseline.py
 comparison/other_paper_method/code/diagnostics/analyze_hops.py
 comparison/other_paper_method/code/diagnostics/diagnose_attention.py
 comparison/other_paper_method/code/diagnostics/diagnose_clutrr_mapping.py

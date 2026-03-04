@@ -31,6 +31,7 @@ clutrr/
     graph_reasoning.py
   cli/
     train.py
+    baseline.py
   preprocess/
 
 ruletaker/
@@ -42,12 +43,12 @@ ruletaker/
     distributed.py
   cli/
     train.py
+    baseline.py
 
 comparison/
   other_paper_method/
     code/
       analysis/
-      cli/
       diagnostics/
       experiments/
       gpt_baselines/
@@ -59,8 +60,17 @@ comparison/
 ## Entrypoints
 
 - `python -m clutrr.cli.train ...`
+- `python -m clutrr.cli.baseline ...`
 - `python -m ruletaker.cli.train ...`
-- `python -m comparison.other_paper_method.code.cli.baseline ...` (for prior-paper comparison)
+- `python -m ruletaker.cli.baseline ...`
+
+Example with YAML config:
+
+- `python -m clutrr.cli.train --config configs/clutrr/train_tsra.yaml`
+- `python -m clutrr.cli.baseline --config configs/clutrr/train_baseline.yaml`
+- `python -m ruletaker.cli.train --config configs/ruletaker/train.yaml`
+- `python -m ruletaker.cli.baseline --config configs/ruletaker/train_baseline.yaml`
+- CLI args still override YAML, e.g. `python -m clutrr.cli.train --config configs/clutrr/train_tsra.yaml --epochs 30`
 
 ## Notes
 

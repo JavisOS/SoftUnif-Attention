@@ -18,7 +18,3 @@ TSRA 训练主入口不依赖这里列出的文件，主命令：
 RuleTaker 主入口：
 
 - `python -m ruletaker.cli.train ...`
-
-他人方法对比入口示例：
-
-- `python -m comparison.other_paper_method.code.cli.baseline ...`

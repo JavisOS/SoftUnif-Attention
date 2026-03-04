@@ -1,0 +1,14 @@
+# CLUTRR transformer baseline training configuration
+
+model_type: roberta
+epochs: 10
+lr: 0.00002
+batch_size: 16
+eval_batch_size: 32
+num_workers: 0
+
+root: data
+dataset: data_089907f8
+
+gpus: "0"
+seed: 42

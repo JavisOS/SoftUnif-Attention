@@ -1,0 +1,15 @@
+# RuleTaker training configuration
+
+model_type: roberta
+epochs: 10
+batch_size: 32
+lr: 0.00002
+
+root: data/rule-reasoning-dataset-V2020.2.5.0/original
+gpus: "0"
+limit: null
+train_depth: depth-1,depth-2
+eval_depths: depth-0,depth-1,depth-2,depth-3,depth-5
+eval_on_train: false
+max_length: 512
+seed: 42

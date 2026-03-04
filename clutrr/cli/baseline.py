@@ -2,9 +2,11 @@ import argparse
 import csv
 import math
 import os
+from pathlib import Path
 
 import torch
 import torch.nn as nn
+import yaml
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
@@ -13,6 +15,42 @@ from clutrr.utils.parsing import parse_pair_literal
 from clutrr.config.defaults import DEFAULT_CLUTRR_DATASET, DEFAULT_CLUTRR_ROOT
 from clutrr.config.relation_schema import RELATION_ID_MAP_21_WITH_NOTHING as relation_id_map
 from clutrr.utils.seed import set_seed
+
+
+BASELINE_DEFAULTS = {
+    "model_type": "roberta",
+    "root": DEFAULT_CLUTRR_ROOT,
+    "dataset": DEFAULT_CLUTRR_DATASET,
+    "batch_size": 16,
+    "eval_batch_size": 32,
+    "num_workers": 0,
+    "lr": 2e-5,
+    "epochs": 10,
+    "gpus": "0",
+    "seed": 42,
+}
+
+
+def _extract_config_path(argv=None):
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--config", type=str, default=None)
+    args, _ = parser.parse_known_args(argv)
+    return args.config
+
+
+def _load_yaml_config(config_path: str | None) -> dict:
+    if not config_path:
+        return {}
+
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    with path.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Config must be a YAML mapping/dict: {config_path}")
+    return data
 
 
 class CLUTRRBaselineDataset(Dataset):
@@ -153,29 +191,53 @@ def evaluate(model, loader):
     return overall_acc, short_acc, long_acc
 
 
-def build_arg_parser():
+def build_arg_parser(defaults=None):
+    defaults = defaults or BASELINE_DEFAULTS
     parser = argparse.ArgumentParser(
-        prog="python -m comparison.other_paper_method.code.cli.baseline",
+        prog="python -m clutrr.cli.baseline",
         description="Train transformer baseline on CLUTRR only.",
     )
+    parser.add_argument("--config", type=str, default=None, help="YAML config path. CLI args override YAML values.")
     parser.add_argument(
         "--model_type",
         type=str,
-        default="roberta",
+        default=defaults["model_type"],
         choices=["bert", "roberta", "roberta-large", "deberta", "deberta-v3", "deberta-v3-large", "modernbert"],
         help="Backbone model.",
     )
-    parser.add_argument("--root", type=str, default=DEFAULT_CLUTRR_ROOT, help="CLUTRR data root.")
-    parser.add_argument("--dataset", type=str, default=DEFAULT_CLUTRR_DATASET, help="CLUTRR dataset folder.")
-    parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--lr", type=float, default=2e-5)
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--root", type=str, default=defaults["root"], help="CLUTRR data root.")
+    parser.add_argument("--dataset", type=str, default=defaults["dataset"], help="CLUTRR dataset folder.")
+    parser.add_argument("--batch_size", type=int, default=defaults["batch_size"])
+    parser.add_argument("--eval_batch_size", type=int, default=defaults["eval_batch_size"])
+    parser.add_argument("--num_workers", type=int, default=defaults["num_workers"])
+    parser.add_argument("--lr", type=float, default=defaults["lr"])
+    parser.add_argument("--epochs", type=int, default=defaults["epochs"])
+    parser.add_argument("--gpus", type=str, default=defaults["gpus"])
+    parser.add_argument("--seed", type=int, default=defaults["seed"])
     return parser
 
 
+def parse_baseline_args():
+    config_path = _extract_config_path()
+    defaults = dict(BASELINE_DEFAULTS)
+
+    yaml_config = _load_yaml_config(config_path)
+    unknown_keys = sorted(set(yaml_config.keys()) - set(defaults.keys()))
+    if unknown_keys:
+        raise ValueError(f"Unknown config keys in {config_path}: {', '.join(unknown_keys)}")
+    defaults.update(yaml_config)
+
+    parser = build_arg_parser(defaults=defaults)
+    return parser.parse_args()
+
+
 def run():
-    args = build_arg_parser().parse_args()
-    set_seed(42)
+    args = parse_baseline_args()
+
+    if args.gpus is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpus)
+
+    set_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     print(f"Model: {args.model_type}")
@@ -186,8 +248,20 @@ def run():
 
     train_ds = CLUTRRBaselineDataset(args.root, args.dataset, "train")
     test_ds = CLUTRRBaselineDataset(args.root, args.dataset, "test")
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collator)
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size * 2, shuffle=False, collate_fn=collator)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=collator,
+        num_workers=args.num_workers,
+    )
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=args.eval_batch_size,
+        shuffle=False,
+        collate_fn=collator,
+        num_workers=args.num_workers,
+    )
 
     model = BaselineModel(args.model_type, num_labels=len(relation_id_map)).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
