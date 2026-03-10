@@ -70,6 +70,7 @@ Example with YAML config:
 - `python -m clutrr.cli.baseline --config configs/clutrr/train_baseline.yaml`
 - `python -m ruletaker.cli.train --config configs/ruletaker/train.yaml`
 - `python -m ruletaker.cli.baseline --config configs/ruletaker/train_baseline.yaml`
+- `python -m clutrr.cli.eval_gemini_openai --config configs/clutrr/eval_gemini_openai.yaml`
 - CLI args still override YAML, e.g. `python -m clutrr.cli.train --config configs/clutrr/train_tsra.yaml --epochs 30`
 
 ## Notes
