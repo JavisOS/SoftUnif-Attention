@@ -1,6 +1,7 @@
 import os
 import argparse
 import random
+import sys
 from pathlib import Path
 import torch
 import torch.nn as nn
@@ -29,6 +30,19 @@ RULETAKER_TRAIN_DEFAULTS = {
     "max_length": 512,
     "seed": 42,
 }
+
+
+def _make_train_pbar(iterable, desc: str):
+    # Avoid corrupted multi-line bars in non-TTY logs and on terminal resize.
+    is_tty = sys.stderr.isatty()
+    return tqdm(
+        iterable,
+        desc=desc,
+        disable=not is_tty,
+        dynamic_ncols=False,
+        ncols=100,
+        leave=False,
+    )
 
 
 def _extract_config_path(argv=None):
@@ -318,7 +332,7 @@ def run_training(prog="python -m ruletaker.cli.train", description="Train on Rul
         correct = 0
         total = 0
         
-        pbar = tqdm(train_loader, desc=f"Ep {epoch+1}")
+        pbar = _make_train_pbar(train_loader, desc=f"Ep {epoch+1}")
         for batch in pbar:
             optimizer.zero_grad()
             out = model(batch)

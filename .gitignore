@@ -182,3 +182,4 @@ outputs/gemini_eval/gemini31pro_clutrr_full_rawacc_hop2to10_dirfix_v1.summary.js
 .gitignore
 outputs/gemini_eval/gpt52_clutrr_full_rawacc_hop2to10_dirfix_v1.predictions.jsonl
 outputs/gemini_eval/gpt52_clutrr_full_rawacc_hop2to10_dirfix_v1.summary.json
+gpu_run.py

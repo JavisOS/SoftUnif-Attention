@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 from pathlib import Path
 
 import torch
@@ -39,6 +40,19 @@ BASE_TRAIN_DEFAULTS = {
     "lambda_nexthop": 1.0,
     "lambda_consistency": 5.0,
 }
+
+
+def _make_train_pbar(iterable, desc: str):
+    # Avoid corrupted multi-line bars in non-TTY logs and on terminal resize.
+    is_tty = sys.stderr.isatty()
+    return tqdm(
+        iterable,
+        desc=desc,
+        disable=not is_tty,
+        dynamic_ncols=False,
+        ncols=100,
+        leave=False,
+    )
 
 
 def _extract_config_path(argv=None):
@@ -243,7 +257,7 @@ def run_training():
         )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
-    print("Starting Training (Scheme A + B)...")
+    print("Starting Training...")
 
     for epoch in range(args.epochs):
         if args.strategy == "ddp":
@@ -254,7 +268,7 @@ def run_training():
         accum_aux = 0.0
         accum_cons = 0.0
 
-        pbar = tqdm(train_loader, desc=f"Ep {epoch + 1}")
+        pbar = _make_train_pbar(train_loader, desc=f"Ep {epoch + 1}")
         for batch in pbar:
             if batch is None:
                 continue
