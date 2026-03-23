@@ -6,6 +6,19 @@ def _unwrap_model(model: nn.Module) -> nn.Module:
     return model.module if hasattr(model, "module") else model
 
 
+def _move_batch_to_device(batch: dict, device: torch.device, skip_keys: set[str] | None = None) -> dict:
+    skip_keys = skip_keys or set()
+    moved = {}
+    for key, value in batch.items():
+        if key in skip_keys:
+            moved[key] = value
+        elif isinstance(value, torch.Tensor):
+            moved[key] = value.to(device, non_blocking=True)
+        else:
+            moved[key] = value
+    return moved
+
+
 def evaluate_robustness(model, loader, device):
     model.eval()
     base_model = _unwrap_model(model)
@@ -26,6 +39,8 @@ def evaluate_robustness(model, loader, device):
         for batch in loader:
             if batch is None:
                 continue
+
+            batch = _move_batch_to_device(batch, device=device, skip_keys={"raw_batch"})
 
             y_target = batch["labels"]
             hops = batch["hops"]

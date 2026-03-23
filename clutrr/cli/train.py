@@ -42,6 +42,19 @@ BASE_TRAIN_DEFAULTS = {
 }
 
 
+def _move_batch_to_device(batch: dict, device: torch.device, skip_keys: set[str] | None = None) -> dict:
+    skip_keys = skip_keys or set()
+    moved = {}
+    for key, value in batch.items():
+        if key in skip_keys:
+            moved[key] = value
+        elif isinstance(value, torch.Tensor):
+            moved[key] = value.to(device, non_blocking=True)
+        else:
+            moved[key] = value
+    return moved
+
+
 def _make_train_pbar(iterable, desc: str):
     # Avoid corrupted multi-line bars in non-TTY logs and on terminal resize.
     is_tty = sys.stderr.isatty()
@@ -273,7 +286,7 @@ def run_training():
             if batch is None:
                 continue
 
-            batch_for_model = dict(batch)
+            batch_for_model = _move_batch_to_device(batch, device=device, skip_keys={"raw_batch"})
             if "raw_batch" in batch_for_model:
                 batch_for_model.pop("raw_batch")
 
