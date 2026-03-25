@@ -1,17 +1,40 @@
 import torch
 import torch.nn as nn
 
-from clutrr.models.backbones import build_backbone_model
+from clutrr.models.backbones import build_backbone_model, is_decoder_only_model
 from clutrr.models.relation_attention import RelationConditionedEntityAttention
 
 
 class TsraReasonerModel(nn.Module):
-    def __init__(self, device, tokenizer, model_type="roberta"):
+    def __init__(
+        self,
+        device,
+        tokenizer,
+        model_type="roberta",
+        *,
+        model_name_or_path=None,
+        use_qlora=False,
+        load_in_4bit=False,
+        lora_r=16,
+        lora_alpha=32,
+        lora_dropout=0.05,
+        pooling=None,
+    ):
         super().__init__()
         self.device = device
 
         self.model_type = model_type.lower()
-        self.encoder = build_backbone_model(self.model_type)
+        self.decoder_only = is_decoder_only_model(self.model_type)
+        self.pooling = pooling or ("last_token" if self.decoder_only else "cls")
+        self.encoder = build_backbone_model(
+            self.model_type,
+            model_name_or_path=model_name_or_path,
+            use_qlora=use_qlora,
+            load_in_4bit=load_in_4bit,
+            lora_r=lora_r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+        )
 
         self.tokenizer = tokenizer
         self.hidden_size = self.encoder.config.hidden_size
@@ -32,6 +55,14 @@ class TsraReasonerModel(nn.Module):
             nn.ReLU(),
             nn.Linear(self.hidden_size, 21),
         )
+
+    def _pool_sequence(self, sequence_output, attention_mask):
+        if self.pooling == "cls":
+            return sequence_output[:, 0, :]
+
+        token_lengths = attention_mask.long().sum(dim=1).clamp(min=1) - 1
+        b_idx = torch.arange(sequence_output.size(0), device=sequence_output.device)
+        return sequence_output[b_idx, token_lengths, :]
 
     def get_entity_embeddings(self, last_hidden_state, entity_spans):
         bsz, max_entities, _ = entity_spans.shape
@@ -59,10 +90,13 @@ class TsraReasonerModel(nn.Module):
     def compute_logits(self, input_ids, attention_mask, entity_spans, query_indices):
         out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
         sequence_output = out.last_hidden_state
-        cls_output = sequence_output[:, 0, :]
+        head_dtype = self.classifier.weight.dtype
+        sequence_for_heads = sequence_output.to(head_dtype)
+
+        cls_output = self._pool_sequence(sequence_for_heads, attention_mask)
         logits_cls = self.classifier(cls_output)
 
-        entity_embs = self.get_entity_embeddings(sequence_output, entity_spans)
+        entity_embs = self.get_entity_embeddings(sequence_for_heads, entity_spans)
         valid_mask = entity_spans[:, :, 0] != -1
         obj_indices = query_indices[:, 1]
         entity_embs_upd, attn_scores = self.entity_attn(entity_embs, valid_mask, obj_indices=obj_indices)
@@ -104,7 +138,7 @@ class TsraReasonerModel(nn.Module):
                 query_indices=query_indices,
             )
             loss_aug_ce = nn.functional.cross_entropy(logits_aug, labels)
-            p_clean = nn.functional.softmax(logits_orig, dim=1)
+            p_clean = nn.functional.softmax(logits_orig, dim=1).detach()
             p_aug = nn.functional.log_softmax(logits_aug, dim=1)
             kl_loss = nn.functional.kl_div(p_aug, p_clean, reduction="batchmean")
             main_loss = 0.5 * main_loss + 0.5 * loss_aug_ce

@@ -1,0 +1,23 @@
+# CLUTRR baseline (no TSRA) with local Qwen3-8B + QLoRA
+
+model_type: qwen2.5-7b
+model_name_or_path: /tos/lxh/models/qwen3_8
+
+epochs: 5
+lr: 0.00002
+batch_size: 8
+eval_batch_size: 16
+num_workers: 0
+
+root: data
+dataset: data_089907f8
+
+gpus: "0"
+seed: 42
+
+use_qlora: true
+load_in_4bit: true
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+pooling: last_token

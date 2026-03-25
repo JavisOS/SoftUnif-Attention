@@ -10,7 +10,7 @@ import yaml
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from clutrr.models.backbones import build_backbone_model, build_tokenizer
+from clutrr.models.backbones import build_backbone_model, build_tokenizer, is_decoder_only_model
 from clutrr.utils.parsing import parse_pair_literal
 from clutrr.config.defaults import DEFAULT_CLUTRR_DATASET, DEFAULT_CLUTRR_ROOT
 from clutrr.config.relation_schema import RELATION_ID_MAP_21_WITH_NOTHING as relation_id_map
@@ -19,6 +19,7 @@ from clutrr.utils.seed import set_seed
 
 BASELINE_DEFAULTS = {
     "model_type": "roberta",
+    "model_name_or_path": None,
     "root": DEFAULT_CLUTRR_ROOT,
     "dataset": DEFAULT_CLUTRR_DATASET,
     "batch_size": 16,
@@ -28,6 +29,12 @@ BASELINE_DEFAULTS = {
     "epochs": 10,
     "gpus": "0",
     "seed": 42,
+    "use_qlora": False,
+    "load_in_4bit": False,
+    "lora_r": 16,
+    "lora_alpha": 32,
+    "lora_dropout": 0.05,
+    "pooling": None,
 }
 
 
@@ -102,9 +109,14 @@ class CLUTRRBaselineDataset(Dataset):
 
 
 class BaselineCollator:
-    def __init__(self, tokenizer, device):
+    def __init__(self, tokenizer, device, model_type="roberta"):
         self.tokenizer = tokenizer
         self.device = device
+        self.decoder_only = is_decoder_only_model(model_type)
+
+    @staticmethod
+    def _format_decoder_input(story, query):
+        return f"Story: {story}\nQuestion: What is the relation between {query}?"
 
     def __call__(self, batch):
         stories = [b["story"] for b in batch]
@@ -112,14 +124,24 @@ class BaselineCollator:
         targets = torch.tensor([b["target_id"] for b in batch], dtype=torch.long).to(self.device)
         hops = torch.tensor([b["hops"] for b in batch], dtype=torch.long).to(self.device)
 
-        enc = self.tokenizer(
-            text=stories,
-            text_pair=queries,
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
-            max_length=512,
-        ).to(self.device)
+        if self.decoder_only:
+            prompts = [self._format_decoder_input(story, query) for story, query in zip(stories, queries)]
+            enc = self.tokenizer(
+                text=prompts,
+                padding=True,
+                truncation=True,
+                return_tensors="pt",
+                max_length=512,
+            ).to(self.device)
+        else:
+            enc = self.tokenizer(
+                text=stories,
+                text_pair=queries,
+                padding=True,
+                truncation=True,
+                return_tensors="pt",
+                max_length=512,
+            ).to(self.device)
 
         return {
             "input_ids": enc.input_ids,
@@ -130,18 +152,52 @@ class BaselineCollator:
 
 
 class BaselineModel(nn.Module):
-    def __init__(self, model_type, num_labels):
+    def __init__(
+        self,
+        model_type,
+        num_labels,
+        *,
+        model_name_or_path=None,
+        use_qlora=False,
+        load_in_4bit=False,
+        lora_r=16,
+        lora_alpha=32,
+        lora_dropout=0.05,
+        pooling=None,
+    ):
         super().__init__()
-        self.encoder = build_backbone_model(model_type)
+        model_type = model_type.lower()
+        self.decoder_only = is_decoder_only_model(model_type)
+        self.pooling = pooling or ("last_token" if self.decoder_only else "cls")
+        self.encoder = build_backbone_model(
+            model_type,
+            model_name_or_path=model_name_or_path,
+            use_qlora=use_qlora,
+            load_in_4bit=load_in_4bit,
+            lora_r=lora_r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+        )
         self.hidden_size = self.encoder.config.hidden_size
         self.classifier = nn.Linear(self.hidden_size, num_labels)
+
+    def _pool_sequence(self, output, attention_mask):
+        if self.pooling == "cls":
+            pooled = output[:, 0, :]
+        else:
+            token_lengths = attention_mask.long().sum(dim=1).clamp(min=1) - 1
+            batch_indices = torch.arange(output.size(0), device=output.device)
+            pooled = output[batch_indices, token_lengths, :]
+        return pooled
 
     def forward(self, input_ids, attention_mask, labels=None):
         out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
         if hasattr(out, "pooler_output") and out.pooler_output is not None:
             pooled = out.pooler_output
         else:
-            pooled = out.last_hidden_state[:, 0, :]
+            pooled = self._pool_sequence(out.last_hidden_state, attention_mask)
+
+        pooled = pooled.to(device=self.classifier.weight.device, dtype=self.classifier.weight.dtype)
 
         logits = self.classifier(pooled)
         loss = None
@@ -202,8 +258,14 @@ def build_arg_parser(defaults=None):
         "--model_type",
         type=str,
         default=defaults["model_type"],
-        choices=["bert", "roberta", "roberta-large", "deberta", "deberta-v3", "deberta-v3-large", "modernbert"],
+        choices=["bert", "roberta", "roberta-large", "deberta", "deberta-v3", "deberta-v3-large", "modernbert", "qwen2.5-7b"],
         help="Backbone model.",
+    )
+    parser.add_argument(
+        "--model_name_or_path",
+        type=str,
+        default=defaults["model_name_or_path"],
+        help="Optional local/remote model path overriding built-in model id.",
     )
     parser.add_argument("--root", type=str, default=defaults["root"], help="CLUTRR data root.")
     parser.add_argument("--dataset", type=str, default=defaults["dataset"], help="CLUTRR dataset folder.")
@@ -214,6 +276,28 @@ def build_arg_parser(defaults=None):
     parser.add_argument("--epochs", type=int, default=defaults["epochs"])
     parser.add_argument("--gpus", type=str, default=defaults["gpus"])
     parser.add_argument("--seed", type=int, default=defaults["seed"])
+    parser.add_argument(
+        "--use_qlora",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["use_qlora"],
+        help="Enable LoRA adapters for decoder-only models.",
+    )
+    parser.add_argument(
+        "--load_in_4bit",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["load_in_4bit"],
+        help="Load backbone in 4bit quantized mode.",
+    )
+    parser.add_argument("--lora_r", type=int, default=defaults["lora_r"])
+    parser.add_argument("--lora_alpha", type=int, default=defaults["lora_alpha"])
+    parser.add_argument("--lora_dropout", type=float, default=defaults["lora_dropout"])
+    parser.add_argument(
+        "--pooling",
+        type=str,
+        default=defaults["pooling"],
+        choices=["cls", "last_token", None],
+        help="Sequence pooling strategy. Default picks model-specific strategy.",
+    )
     return parser
 
 
@@ -243,8 +327,8 @@ def run():
     print(f"Model: {args.model_type}")
     print("Loading CLUTRR data...")
 
-    tokenizer = build_tokenizer(args.model_type)
-    collator = BaselineCollator(tokenizer, device)
+    tokenizer = build_tokenizer(args.model_type, model_name_or_path=args.model_name_or_path)
+    collator = BaselineCollator(tokenizer, device, model_type=args.model_type)
 
     train_ds = CLUTRRBaselineDataset(args.root, args.dataset, "train")
     test_ds = CLUTRRBaselineDataset(args.root, args.dataset, "test")
@@ -263,7 +347,21 @@ def run():
         num_workers=args.num_workers,
     )
 
-    model = BaselineModel(args.model_type, num_labels=len(relation_id_map)).to(device)
+    model = BaselineModel(
+        args.model_type,
+        num_labels=len(relation_id_map),
+        model_name_or_path=args.model_name_or_path,
+        use_qlora=args.use_qlora,
+        load_in_4bit=args.load_in_4bit,
+        lora_r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        pooling=args.pooling,
+    )
+    if not getattr(model.encoder, "is_loaded_in_4bit", False):
+        model = model.to(device)
+    else:
+        model.classifier = model.classifier.to(device=device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     print("Starting Training...")

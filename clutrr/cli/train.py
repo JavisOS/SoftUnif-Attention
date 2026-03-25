@@ -27,6 +27,7 @@ from clutrr.utils.seed import set_seed
 
 BASE_TRAIN_DEFAULTS = {
     "model_type": "deberta",
+    "model_name_or_path": None,
     "epochs": 10,
     "lr": 2e-5,
     "batch_size": 16,
@@ -39,6 +40,12 @@ BASE_TRAIN_DEFAULTS = {
     "seed": 42,
     "lambda_nexthop": 1.0,
     "lambda_consistency": 5.0,
+    "use_qlora": False,
+    "load_in_4bit": False,
+    "lora_r": 16,
+    "lora_alpha": 32,
+    "lora_dropout": 0.05,
+    "pooling": None,
 }
 
 
@@ -107,8 +114,23 @@ def build_arg_parser(defaults=None):
         "--model_type",
         type=str,
         default=defaults["model_type"],
-        choices=["roberta", "roberta-large", "deberta", "deberta-v3", "deberta-v3-large", "bert", "modernbert"],
+        choices=[
+            "roberta",
+            "roberta-large",
+            "deberta",
+            "deberta-v3",
+            "deberta-v3-large",
+            "bert",
+            "modernbert",
+            "qwen2.5-7b",
+        ],
         help="Model backbone type",
+    )
+    parser.add_argument(
+        "--model_name_or_path",
+        type=str,
+        default=defaults["model_name_or_path"],
+        help="Optional local/remote model path overriding the built-in model id.",
     )
     parser.add_argument("--epochs", type=int, default=defaults["epochs"], help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=defaults["lr"], help="Learning rate")
@@ -153,6 +175,33 @@ def build_arg_parser(defaults=None):
         default=defaults["lambda_consistency"],
         help="Weight for consistency regularization loss",
     )
+    parser.add_argument(
+        "--use_qlora",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["use_qlora"],
+        help="Enable LoRA adapters on decoder-only backbones.",
+    )
+    parser.add_argument(
+        "--load_in_4bit",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["load_in_4bit"],
+        help="Load backbone in 4-bit quantization (recommended for QLoRA).",
+    )
+    parser.add_argument("--lora_r", type=int, default=defaults["lora_r"], help="LoRA rank.")
+    parser.add_argument("--lora_alpha", type=int, default=defaults["lora_alpha"], help="LoRA alpha.")
+    parser.add_argument(
+        "--lora_dropout",
+        type=float,
+        default=defaults["lora_dropout"],
+        help="LoRA dropout.",
+    )
+    parser.add_argument(
+        "--pooling",
+        type=str,
+        default=defaults["pooling"],
+        choices=["cls", "last_token", None],
+        help="Sequence pooling strategy for classifier head. Default picks model-specific strategy.",
+    )
     return parser
 
 
@@ -186,6 +235,9 @@ def run_training():
         rank, world_size, local_rank = 0, 1, 0
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    if args.use_qlora and args.strategy != "single":
+        raise ValueError("QLoRA currently supports strategy=single only in this training script.")
+
     set_seed(args.seed)
     if _is_main_process():
         print(f"Device: {device}")
@@ -193,7 +245,7 @@ def run_training():
         print(f"GPU Visible (CUDA_VISIBLE_DEVICES): {os.environ.get('CUDA_VISIBLE_DEVICES', '')}")
         print(f"Strategy: {args.strategy} (rank={rank}, world_size={world_size}, local_rank={local_rank})")
 
-    tokenizer = build_tokenizer(args.model_type)
+    tokenizer = build_tokenizer(args.model_type, model_name_or_path=args.model_name_or_path)
 
     root = args.root
     dset = args.dataset
@@ -213,7 +265,7 @@ def run_training():
     )
     test_ds.data = [d for d in test_ds.data if d is not None]
 
-    collator = TsraBatchCollator(tokenizer, device)
+    collator = TsraBatchCollator(tokenizer, device, model_type=args.model_type)
 
     if args.strategy == "ddp":
         train_sampler = DistributedSampler(train_ds, num_replicas=world_size, rank=rank, shuffle=True)
@@ -250,7 +302,25 @@ def run_training():
             num_workers=args.num_workers,
         )
 
-    model = TsraReasonerModel(device, tokenizer, model_type=args.model_type).to(device)
+    model = TsraReasonerModel(
+        device,
+        tokenizer,
+        model_type=args.model_type,
+        model_name_or_path=args.model_name_or_path,
+        use_qlora=args.use_qlora,
+        load_in_4bit=args.load_in_4bit,
+        lora_r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        pooling=args.pooling,
+    )
+    if not getattr(model.encoder, "is_loaded_in_4bit", False):
+        model = model.to(device)
+    else:
+        model.classifier = model.classifier.to(device)
+        model.entity_attn = model.entity_attn.to(device)
+        model.pair_classifier = model.pair_classifier.to(device)
+        model.rel_proj = model.rel_proj.to(device)
 
     if args.strategy == "dp":
         if not torch.cuda.is_available():

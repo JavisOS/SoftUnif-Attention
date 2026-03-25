@@ -1,0 +1,27 @@
+# CLUTRR TSRA training (local model path / Qwen3-8B text + QLoRA)
+
+model_type: qwen2.5-7b
+model_name_or_path: /tos/lxh/models/qwen3_8
+
+epochs: 10
+lr: 0.00002
+batch_size: 4
+eval_batch_size: 4
+num_workers: 0
+
+root: data
+dataset: data_089907f8
+
+gpus: "0"
+strategy: single
+
+seed: 42
+lambda_nexthop: 1.0
+lambda_consistency: 5.0
+
+use_qlora: true
+load_in_4bit: true
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+pooling: last_token
