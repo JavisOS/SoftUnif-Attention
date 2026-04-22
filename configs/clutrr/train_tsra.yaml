@@ -16,4 +16,5 @@ strategy: single
 
 seed: 42
 lambda_nexthop: 1.0
+lambda_edge: 1.0
 lambda_consistency: 5.0

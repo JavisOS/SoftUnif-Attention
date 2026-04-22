@@ -51,7 +51,7 @@ class TsraReasonerModel(nn.Module):
             nn.Linear(self.hidden_size, 21),
         )
         self.rel_proj = nn.Sequential(
-            nn.Linear(self.hidden_size * 2, self.hidden_size),
+            nn.Linear(self.hidden_size * 3, self.hidden_size),
             nn.ReLU(),
             nn.Linear(self.hidden_size, 21),
         )
@@ -112,7 +112,7 @@ class TsraReasonerModel(nn.Module):
         logits = logits_cls + logits_pair
         return logits, entity_embs_upd, attn_scores
 
-    def forward(self, batch_data, lambda1=1.0, lambda_cons=0.0):
+    def forward(self, batch_data, lambda1=1.0, lambda_edge=0.0, lambda_cons=0.0):
         input_ids = batch_data["input_ids"]
         attention_mask = batch_data["attention_mask"]
         labels = batch_data["labels"]
@@ -138,7 +138,7 @@ class TsraReasonerModel(nn.Module):
                 query_indices=query_indices,
             )
             loss_aug_ce = nn.functional.cross_entropy(logits_aug, labels)
-            p_clean = nn.functional.softmax(logits_orig, dim=1).detach()
+            p_clean = nn.functional.softmax(logits_orig, dim=1)
             p_aug = nn.functional.log_softmax(logits_aug, dim=1)
             kl_loss = nn.functional.kl_div(p_aug, p_clean, reduction="batchmean")
             main_loss = 0.5 * main_loss + 0.5 * loss_aug_ce
@@ -146,8 +146,11 @@ class TsraReasonerModel(nn.Module):
 
         entity_embs = entity_embs_upd
         loss_nexthop = torch.tensor(0.0).to(self.device)
+        loss_edge = torch.tensor(0.0).to(self.device)
         total_hops = 0
+        total_edges = 0
         batch_nexthop_loss = torch.tensor(0.0, device=self.device)
+        batch_edge_loss = torch.tensor(0.0, device=self.device)
 
         for i in range(len(input_ids)):
             path = path_node_ids[i]
@@ -155,7 +158,6 @@ class TsraReasonerModel(nn.Module):
             if len(valid_path) < 2:
                 continue
 
-            sample_ent_embs = entity_embs[i]
             input_indices = valid_path[:-1]
             target_indices = valid_path[1:]
             step_logits = attn_scores[i, input_indices, :]
@@ -163,15 +165,38 @@ class TsraReasonerModel(nn.Module):
             batch_nexthop_loss += step_loss
             total_hops += 1
 
+            if path_rel_ids is not None:
+                rel_targets = path_rel_ids[i]
+                valid_rel_targets = rel_targets[rel_targets != -1]
+                num_edges = min(input_indices.numel(), valid_rel_targets.numel())
+                if num_edges > 0:
+                    edge_src = input_indices[:num_edges]
+                    edge_dst = target_indices[:num_edges]
+                    edge_labels = valid_rel_targets[:num_edges]
+
+                    e_src = entity_embs[i, edge_src]
+                    e_dst = entity_embs[i, edge_dst]
+                    edge_feats = torch.cat([e_src, e_dst, e_src * e_dst], dim=-1)
+                    edge_logits = self.rel_proj(edge_feats)
+                    batch_edge_loss += nn.functional.cross_entropy(
+                        edge_logits,
+                        edge_labels,
+                        reduction="sum",
+                    )
+                    total_edges += num_edges
+
         if total_hops > 0:
             loss_nexthop = batch_nexthop_loss / total_hops
+        if total_edges > 0:
+            loss_edge = batch_edge_loss / total_edges
 
-        total_loss = main_loss + lambda1 * loss_nexthop + lambda_cons * cons_loss
+        total_loss = main_loss + lambda1 * loss_nexthop + lambda_edge * loss_edge + lambda_cons * cons_loss
         return {
             "loss": total_loss,
             "losses": {
                 "main": main_loss.item(),
                 "nexthop": loss_nexthop.item(),
+                "edge": loss_edge.item(),
                 "cons": cons_loss.item(),
             },
             "logits": logits_orig,

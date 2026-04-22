@@ -39,6 +39,7 @@ BASE_TRAIN_DEFAULTS = {
     "strategy": "single",
     "seed": 42,
     "lambda_nexthop": 1.0,
+    "lambda_edge": 1.0,
     "lambda_consistency": 5.0,
     "use_qlora": False,
     "load_in_4bit": False,
@@ -122,7 +123,7 @@ def build_arg_parser(defaults=None):
             "deberta-v3-large",
             "bert",
             "modernbert",
-            "qwen2.5-7b",
+            "qwen3-8b",
         ],
         help="Model backbone type",
     )
@@ -168,6 +169,12 @@ def build_arg_parser(defaults=None):
         type=float,
         default=defaults["lambda_nexthop"],
         help="Weight for next-hop supervision loss",
+    )
+    parser.add_argument(
+        "--lambda_edge",
+        type=float,
+        default=defaults["lambda_edge"],
+        help="Weight for edge-relation supervision loss",
     )
     parser.add_argument(
         "--lambda_consistency",
@@ -349,6 +356,7 @@ def run_training():
         model.train()
         total_loss = 0.0
         accum_aux = 0.0
+        accum_edge = 0.0
         accum_cons = 0.0
 
         pbar = _make_train_pbar(train_loader, desc=f"Ep {epoch + 1}")
@@ -364,6 +372,7 @@ def run_training():
             out = model(
                 batch_for_model,
                 lambda1=args.lambda_nexthop,
+                lambda_edge=args.lambda_edge,
                 lambda_cons=args.lambda_consistency,
             )
 
@@ -373,11 +382,13 @@ def run_training():
 
             total_loss += loss.item()
             accum_aux += out["losses"]["nexthop"]
+            accum_edge += out["losses"]["edge"]
             accum_cons += out["losses"]["cons"]
             pbar.set_postfix(
                 {
                     "L_main": f"{out['losses']['main']:.3f}",
                     "L_aux": f"{out['losses']['nexthop']:.3f}",
+                    "L_edge": f"{out['losses']['edge']:.3f}",
                     "L_cons": f"{out['losses']['cons']:.3f}",
                 }
             )
@@ -386,7 +397,9 @@ def run_training():
         if _is_main_process():
             print(
                 f"Epoch {epoch + 1} Done. Loss: {avg_loss:.4f} "
-                f"(Aux: {accum_aux / len(train_loader):.4f}, Cons: {accum_cons / len(train_loader):.4f})"
+                f"(Aux: {accum_aux / len(train_loader):.4f}, "
+                f"Edge: {accum_edge / len(train_loader):.4f}, "
+                f"Cons: {accum_cons / len(train_loader):.4f})"
             )
 
         if _is_main_process():

@@ -1,6 +1,6 @@
 # CLUTRR TSRA training (local model path / Qwen3-8B text + QLoRA)
 
-model_type: qwen2.5-7b
+model_type: qwen3-8b
 model_name_or_path: /tos/lxh/models/qwen3_8
 
 epochs: 10
@@ -17,6 +17,7 @@ strategy: single
 
 seed: 42
 lambda_nexthop: 1.0
+lambda_edge: 1.0
 lambda_consistency: 5.0
 
 use_qlora: true
