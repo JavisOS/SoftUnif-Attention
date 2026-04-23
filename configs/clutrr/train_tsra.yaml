@@ -18,3 +18,8 @@ seed: 42
 lambda_nexthop: 1.0
 lambda_edge: 1.0
 lambda_consistency: 5.0
+lambda_comp: 0.1
+use_relation_composition: true
+use_composition_logits: false
+composition_logit_weight: 0.1
+debug_comp_grad: false

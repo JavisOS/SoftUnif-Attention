@@ -34,6 +34,8 @@ def evaluate_robustness(model, loader, device):
 
     by_hop_total = {}
     by_hop_correct = {}
+    composition_correct = 0
+    composition_total = 0
 
     with torch.no_grad():
         for batch in loader:
@@ -45,7 +47,7 @@ def evaluate_robustness(model, loader, device):
             y_target = batch["labels"]
             hops = batch["hops"]
 
-            logits_base, _, _ = base_model.compute_logits(
+            logits_base, entity_embs_base, _ = base_model.compute_logits(
                 input_ids=batch["input_ids"],
                 attention_mask=batch["attention_mask"],
                 entity_spans=batch["entity_spans"],
@@ -60,6 +62,18 @@ def evaluate_robustness(model, loader, device):
                 query_indices=batch["query_indices"],
             )
             preds_mod = torch.argmax(logits_mod, dim=1)
+
+            path_node_ids = batch.get("path_node_ids")
+            if path_node_ids is not None and hasattr(base_model, "compute_shared_edge_composition_logits"):
+                comp_logits, comp_valid, _ = base_model.compute_shared_edge_composition_logits(
+                    path_node_ids,
+                    entity_embs_base,
+                )
+                if comp_logits is not None and comp_valid is not None and comp_valid.any():
+                    comp_preds = torch.argmax(comp_logits[comp_valid], dim=1)
+                    comp_targets = y_target[comp_valid]
+                    composition_correct += (comp_preds == comp_targets).sum().item()
+                    composition_total += comp_targets.numel()
 
             for sample in batch["raw_batch"]:
                 story_text = sample["story"]
@@ -110,6 +124,7 @@ def evaluate_robustness(model, loader, device):
     long_corr = sum([by_hop_correct.get(h, 0) for h in range(6, 15)])
     long_tot = sum([by_hop_total.get(h, 0) for h in range(6, 15)])
     long_acc = long_corr / long_tot if long_tot > 0 else 0
+    composition_acc = composition_correct / composition_total if composition_total > 0 else 0
 
     print(f"[Stats] Evaluated {total} samples.")
     print(f"  Changed Story Rate:   {changed_story_rate:.4f}")
@@ -122,4 +137,6 @@ def evaluate_robustness(model, loader, device):
         "consistent_and_correct": prob_robust_correct,
         "short_hop": short_acc,
         "long_hop": long_acc,
+        "composition_acc": composition_acc,
+        "composition_total": composition_total,
     }

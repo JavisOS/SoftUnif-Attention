@@ -55,6 +55,14 @@ class TsraReasonerModel(nn.Module):
             nn.ReLU(),
             nn.Linear(self.hidden_size, 21),
         )
+        self.rel_comp_emb = nn.Embedding(21, self.hidden_size)
+        self.rel_comp_cell = nn.GRUCell(self.hidden_size, self.hidden_size)
+        self.rel_comp_norm = nn.LayerNorm(self.hidden_size)
+        self.comp_classifier = nn.Sequential(
+            nn.Linear(self.hidden_size, self.hidden_size),
+            nn.ReLU(),
+            nn.Linear(self.hidden_size, 21),
+        )
 
     def _pool_sequence(self, sequence_output, attention_mask):
         if self.pooling == "cls":
@@ -82,10 +90,63 @@ class TsraReasonerModel(nn.Module):
                     pool = hidden[start:end].mean(dim=0)
                     sample_embs.append(pool)
                 else:
-                    sample_embs.append(torch.zeros(self.hidden_size).to(self.device))
+                    sample_embs.append(hidden.new_zeros(self.hidden_size))
             emb_list.append(torch.stack(sample_embs))
 
         return torch.stack(emb_list)
+
+    def compute_shared_edge_composition_logits(self, path_node_ids, entity_embs):
+        if path_node_ids is None:
+            return None, None, {"shared_edge_count": 0, "edge_entropy": 0.0}
+
+        bsz = path_node_ids.size(0)
+        valid_samples = torch.zeros(bsz, device=entity_embs.device, dtype=torch.bool)
+        final_states = []
+
+        entropy_sum = torch.zeros((), device=entity_embs.device, dtype=entity_embs.dtype)
+        shared_edge_count = 0
+
+        for i in range(bsz):
+            path = path_node_ids[i]
+            valid_path = path[path != -1]
+            if valid_path.numel() < 2:
+                final_states.append(entity_embs.new_zeros(self.hidden_size))
+                continue
+
+            valid_samples[i] = True
+            src_idx = valid_path[:-1]
+            dst_idx = valid_path[1:]
+
+            e_src = entity_embs[i, src_idx]
+            e_dst = entity_embs[i, dst_idx]
+            edge_feats = torch.cat([e_src, e_dst, e_src * e_dst], dim=-1)
+            edge_logits = self.rel_proj(edge_feats)
+            edge_probs = torch.softmax(edge_logits, dim=-1)
+
+            soft_rel_embs = torch.matmul(edge_probs, self.rel_comp_emb.weight)
+
+            sample_state = entity_embs.new_zeros((1, self.hidden_size))
+            for step_idx in range(soft_rel_embs.size(0)):
+                sample_state = self.rel_comp_cell(
+                    soft_rel_embs[step_idx].unsqueeze(0),
+                    sample_state,
+                )
+            final_states.append(sample_state.squeeze(0))
+
+            step_entropy = -(edge_probs * torch.log(edge_probs.clamp(min=1e-8))).sum(dim=-1)
+            entropy_sum = entropy_sum + step_entropy.sum()
+            shared_edge_count += int(edge_probs.size(0))
+
+        state = torch.stack(final_states, dim=0)
+        state = self.rel_comp_norm(state)
+        comp_logits = self.comp_classifier(state).to(self.classifier.weight.dtype)
+
+        edge_entropy = (entropy_sum / shared_edge_count).item() if shared_edge_count > 0 else 0.0
+        diag = {
+            "shared_edge_count": shared_edge_count,
+            "edge_entropy": edge_entropy,
+        }
+        return comp_logits, valid_samples, diag
 
     def compute_logits(self, input_ids, attention_mask, entity_spans, query_indices):
         out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
@@ -112,7 +173,17 @@ class TsraReasonerModel(nn.Module):
         logits = logits_cls + logits_pair
         return logits, entity_embs_upd, attn_scores
 
-    def forward(self, batch_data, lambda1=1.0, lambda_edge=0.0, lambda_cons=0.0):
+    def forward(
+        self,
+        batch_data,
+        lambda1=1.0,
+        lambda_edge=0.0,
+        lambda_cons=0.0,
+        lambda_comp=0.1,
+        use_relation_composition=True,
+        use_composition_logits=False,
+        composition_logit_weight=0.1,
+    ):
         input_ids = batch_data["input_ids"]
         attention_mask = batch_data["attention_mask"]
         labels = batch_data["labels"]
@@ -127,19 +198,70 @@ class TsraReasonerModel(nn.Module):
             entity_spans=entity_spans,
             query_indices=query_indices,
         )
-        main_loss = nn.functional.cross_entropy(logits_orig, labels)
+
+        comp_logits = None
+        comp_valid = None
+        loss_comp = torch.tensor(0.0, device=logits_orig.device)
+        comp_correct = 0
+        comp_total = 0
+        logits_for_main = logits_orig
+
+        comp_diag = {"shared_edge_count": 0, "edge_entropy": 0.0}
+        if use_relation_composition and path_node_ids is not None:
+            comp_logits, comp_valid, comp_diag = self.compute_shared_edge_composition_logits(
+                path_node_ids,
+                entity_embs_upd,
+            )
+
+            if comp_logits is not None and comp_valid is not None and comp_valid.any():
+                comp_targets = labels[comp_valid]
+                comp_logits_valid = comp_logits[comp_valid]
+                loss_comp = nn.functional.cross_entropy(comp_logits_valid, comp_targets)
+
+                comp_preds = torch.argmax(comp_logits_valid, dim=1)
+                comp_correct = int((comp_preds == comp_targets).sum().item())
+                comp_total = int(comp_targets.numel())
+
+                if use_composition_logits and composition_logit_weight != 0.0:
+                    comp_gate = comp_valid.to(logits_orig.dtype).unsqueeze(-1)
+                    logits_for_main = logits_orig + composition_logit_weight * comp_logits * comp_gate
+
+        main_loss = nn.functional.cross_entropy(logits_for_main, labels)
 
         cons_loss = torch.tensor(0.0).to(self.device)
         if batch_data.get("aug_input_ids") is not None:
-            logits_aug, _, _ = self.compute_logits(
+            logits_aug, entity_embs_aug, _ = self.compute_logits(
                 input_ids=batch_data["aug_input_ids"],
                 attention_mask=batch_data["aug_attention_mask"],
                 entity_spans=batch_data["aug_entity_spans"],
                 query_indices=query_indices,
             )
-            loss_aug_ce = nn.functional.cross_entropy(logits_aug, labels)
-            p_clean = nn.functional.softmax(logits_orig, dim=1)
-            p_aug = nn.functional.log_softmax(logits_aug, dim=1)
+
+            logits_aug_for_main = logits_aug
+            if (
+                use_relation_composition
+                and use_composition_logits
+                and composition_logit_weight != 0.0
+                and path_node_ids is not None
+            ):
+                comp_logits_aug, comp_valid_aug, _ = self.compute_shared_edge_composition_logits(
+                    path_node_ids,
+                    entity_embs_aug,
+                )
+                has_aug_comp = (
+                    comp_logits_aug is not None
+                    and comp_valid_aug is not None
+                    and comp_valid_aug.any()
+                )
+                if has_aug_comp:
+                    comp_aug_gate = comp_valid_aug.to(logits_aug.dtype).unsqueeze(-1)
+                    logits_aug_for_main = (
+                        logits_aug + composition_logit_weight * comp_logits_aug * comp_aug_gate
+                    )
+
+            loss_aug_ce = nn.functional.cross_entropy(logits_aug_for_main, labels)
+            p_clean = nn.functional.softmax(logits_for_main, dim=1)
+            p_aug = nn.functional.log_softmax(logits_aug_for_main, dim=1)
             kl_loss = nn.functional.kl_div(p_aug, p_clean, reduction="batchmean")
             main_loss = 0.5 * main_loss + 0.5 * loss_aug_ce
             cons_loss = kl_loss
@@ -190,7 +312,13 @@ class TsraReasonerModel(nn.Module):
         if total_edges > 0:
             loss_edge = batch_edge_loss / total_edges
 
-        total_loss = main_loss + lambda1 * loss_nexthop + lambda_edge * loss_edge + lambda_cons * cons_loss
+        total_loss = (
+            main_loss
+            + lambda1 * loss_nexthop
+            + lambda_edge * loss_edge
+            + lambda_cons * cons_loss
+            + lambda_comp * loss_comp
+        )
         return {
             "loss": total_loss,
             "losses": {
@@ -198,6 +326,15 @@ class TsraReasonerModel(nn.Module):
                 "nexthop": loss_nexthop.item(),
                 "edge": loss_edge.item(),
                 "cons": cons_loss.item(),
+                "comp": loss_comp.item(),
             },
-            "logits": logits_orig,
+            "metrics": {
+                "comp_correct": comp_correct,
+                "comp_total": comp_total,
+                "comp_acc": (comp_correct / comp_total) if comp_total > 0 else 0.0,
+                "comp_shared_edge_count": int(comp_diag["shared_edge_count"]),
+                "comp_edge_entropy": float(comp_diag["edge_entropy"]),
+                "comp_from_shared_edges": 1 if comp_diag["shared_edge_count"] > 0 else 0,
+            },
+            "logits": logits_for_main,
         }

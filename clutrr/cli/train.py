@@ -41,6 +41,11 @@ BASE_TRAIN_DEFAULTS = {
     "lambda_nexthop": 1.0,
     "lambda_edge": 1.0,
     "lambda_consistency": 5.0,
+    "lambda_comp": 0.1,
+    "use_relation_composition": True,
+    "use_composition_logits": False,
+    "composition_logit_weight": 0.1,
+    "debug_comp_grad": False,
     "use_qlora": False,
     "load_in_4bit": False,
     "lora_r": 16,
@@ -61,6 +66,13 @@ def _move_batch_to_device(batch: dict, device: torch.device, skip_keys: set[str]
         else:
             moved[key] = value
     return moved
+
+
+def _mean_abs_grad(module: nn.Module) -> float:
+    grads = [p.grad.detach().abs().mean() for p in module.parameters() if p.grad is not None]
+    if not grads:
+        return 0.0
+    return torch.stack(grads).mean().item()
 
 
 def _make_train_pbar(iterable, desc: str):
@@ -181,6 +193,36 @@ def build_arg_parser(defaults=None):
         type=float,
         default=defaults["lambda_consistency"],
         help="Weight for consistency regularization loss",
+    )
+    parser.add_argument(
+        "--lambda_comp",
+        type=float,
+        default=defaults["lambda_comp"],
+        help="Weight for relation-composition auxiliary loss",
+    )
+    parser.add_argument(
+        "--use_relation_composition",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["use_relation_composition"],
+        help="Enable shared-edge relation-composition auxiliary supervision.",
+    )
+    parser.add_argument(
+        "--use_composition_logits",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["use_composition_logits"],
+        help="Fuse composition logits into final prediction logits.",
+    )
+    parser.add_argument(
+        "--composition_logit_weight",
+        type=float,
+        default=defaults["composition_logit_weight"],
+        help="Weight of composition logits when fusion is enabled.",
+    )
+    parser.add_argument(
+        "--debug_comp_grad",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["debug_comp_grad"],
+        help="Print gradient diagnostics for shared composition path into rel_proj/encoder.",
     )
     parser.add_argument(
         "--use_qlora",
@@ -328,6 +370,10 @@ def run_training():
         model.entity_attn = model.entity_attn.to(device)
         model.pair_classifier = model.pair_classifier.to(device)
         model.rel_proj = model.rel_proj.to(device)
+        model.rel_comp_emb = model.rel_comp_emb.to(device)
+        model.rel_comp_cell = model.rel_comp_cell.to(device)
+        model.rel_comp_norm = model.rel_comp_norm.to(device)
+        model.comp_classifier = model.comp_classifier.to(device)
 
     if args.strategy == "dp":
         if not torch.cuda.is_available():
@@ -358,6 +404,14 @@ def run_training():
         accum_aux = 0.0
         accum_edge = 0.0
         accum_cons = 0.0
+        accum_comp = 0.0
+        comp_correct_total = 0
+        comp_total_total = 0
+        comp_shared_edge_total = 0
+        comp_entropy_weighted_total = 0.0
+        grad_rel_total = 0.0
+        grad_encoder_total = 0.0
+        grad_step_count = 0
 
         pbar = _make_train_pbar(train_loader, desc=f"Ep {epoch + 1}")
         for batch in pbar:
@@ -374,33 +428,85 @@ def run_training():
                 lambda1=args.lambda_nexthop,
                 lambda_edge=args.lambda_edge,
                 lambda_cons=args.lambda_consistency,
+                lambda_comp=args.lambda_comp,
+                use_relation_composition=args.use_relation_composition,
+                use_composition_logits=args.use_composition_logits,
+                composition_logit_weight=args.composition_logit_weight,
             )
 
             loss = out["loss"]
             loss.backward()
+
+            batch_grad_rel = 0.0
+            batch_grad_encoder = 0.0
+            if args.debug_comp_grad:
+                base_model = model.module if hasattr(model, "module") else model
+                rel_proj_mod = getattr(base_model, "rel_proj", None)
+                encoder_mod = getattr(base_model, "encoder", None)
+                if isinstance(rel_proj_mod, nn.Module):
+                    batch_grad_rel = _mean_abs_grad(rel_proj_mod)
+                if isinstance(encoder_mod, nn.Module):
+                    batch_grad_encoder = _mean_abs_grad(encoder_mod)
+                grad_rel_total += batch_grad_rel
+                grad_encoder_total += batch_grad_encoder
+                grad_step_count += 1
+
             optimizer.step()
 
             total_loss += loss.item()
             accum_aux += out["losses"]["nexthop"]
             accum_edge += out["losses"]["edge"]
             accum_cons += out["losses"]["cons"]
-            pbar.set_postfix(
-                {
-                    "L_main": f"{out['losses']['main']:.3f}",
-                    "L_aux": f"{out['losses']['nexthop']:.3f}",
-                    "L_edge": f"{out['losses']['edge']:.3f}",
-                    "L_cons": f"{out['losses']['cons']:.3f}",
-                }
-            )
+            accum_comp += out["losses"].get("comp", 0.0)
+
+            comp_stats = out.get("metrics", {})
+            batch_comp_correct = int(comp_stats.get("comp_correct", 0))
+            batch_comp_total = int(comp_stats.get("comp_total", 0))
+            batch_comp_shared_edges = int(comp_stats.get("comp_shared_edge_count", 0))
+            batch_comp_entropy = float(comp_stats.get("comp_edge_entropy", 0.0))
+            comp_correct_total += batch_comp_correct
+            comp_total_total += batch_comp_total
+            comp_shared_edge_total += batch_comp_shared_edges
+            if batch_comp_shared_edges > 0:
+                comp_entropy_weighted_total += batch_comp_entropy * batch_comp_shared_edges
+            batch_comp_acc = (batch_comp_correct / batch_comp_total) if batch_comp_total > 0 else 0.0
+
+            postfix = {
+                "L_main": f"{out['losses']['main']:.3f}",
+                "L_aux": f"{out['losses']['nexthop']:.3f}",
+                "L_edge": f"{out['losses']['edge']:.3f}",
+                "L_cons": f"{out['losses']['cons']:.3f}",
+                "L_comp": f"{out['losses'].get('comp', 0.0):.3f}",
+                "CompAcc": f"{batch_comp_acc:.3f}",
+                "CompH": f"{batch_comp_entropy:.2f}",
+            }
+            if args.debug_comp_grad:
+                postfix["G_rel"] = f"{batch_grad_rel:.2e}"
+            pbar.set_postfix(postfix)
 
         avg_loss = total_loss / len(train_loader)
+        epoch_comp_acc = (comp_correct_total / comp_total_total) if comp_total_total > 0 else 0.0
+        epoch_comp_entropy = (
+            comp_entropy_weighted_total / comp_shared_edge_total if comp_shared_edge_total > 0 else 0.0
+        )
+        epoch_grad_rel = grad_rel_total / grad_step_count if grad_step_count > 0 else 0.0
+        epoch_grad_encoder = grad_encoder_total / grad_step_count if grad_step_count > 0 else 0.0
         if _is_main_process():
             print(
                 f"Epoch {epoch + 1} Done. Loss: {avg_loss:.4f} "
                 f"(Aux: {accum_aux / len(train_loader):.4f}, "
                 f"Edge: {accum_edge / len(train_loader):.4f}, "
-                f"Cons: {accum_cons / len(train_loader):.4f})"
+                f"Cons: {accum_cons / len(train_loader):.4f}, "
+                f"Comp: {accum_comp / len(train_loader):.4f}, "
+                f"CompAcc: {epoch_comp_acc:.4f}, "
+                f"CompSharedEdges: {comp_shared_edge_total}, "
+                f"CompH: {epoch_comp_entropy:.4f})"
             )
+            if args.debug_comp_grad:
+                print(
+                    f"  [GradDiag] rel_proj_abs_grad={epoch_grad_rel:.6e}, "
+                    f"encoder_abs_grad={epoch_grad_encoder:.6e}"
+                )
 
         if _is_main_process():
             print(f"--> Evaluating Robustness Epoch {epoch + 1}...")
@@ -412,6 +518,10 @@ def run_training():
             print(f"  Consistent & Correct: {metrics['consistent_and_correct']:.4f}")
             print(f"  Short Hop (2-3):      {metrics['short_hop']:.4f}")
             print(f"  Long Hop (>=6):       {metrics['long_hop']:.4f}")
+            print(
+                f"  Composition Acc:      {metrics['composition_acc']:.4f} "
+                f"(n={metrics['composition_total']})"
+            )
 
     if args.strategy == "ddp" and _is_distributed():
         dist.barrier()
