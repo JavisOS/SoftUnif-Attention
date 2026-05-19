@@ -47,12 +47,6 @@ BASE_TRAIN_DEFAULTS = {
     "lora_alpha": 32,
     "lora_dropout": 0.05,
     "pooling": None,
-    "entity_pooling": "mean",
-    "prediction_head": "cls_pair",
-    "consistency_mode": "kl",
-    "use_relation_conditioning": True,
-    "edge_supervision_target": "separate",
-    "pair_feature_mode": "product",
 }
 
 
@@ -79,21 +73,6 @@ def _make_train_pbar(iterable, desc: str):
         dynamic_ncols=False,
         ncols=100,
         leave=False,
-    )
-
-
-def _print_mention_stats(tag: str, dataset) -> None:
-    stats = getattr(dataset, "stats", {})
-    if not stats:
-        return
-    entity_total = stats.get("entity_total", 0)
-    if entity_total <= 0:
-        print(f"[{tag}] mention stats unavailable.")
-        return
-    print(
-        f"[{tag}] multi-mention entity ratio: {stats['multi_mention_ratio']:.4f} | "
-        f"avg mentions/entity: {stats['avg_mentions_per_entity']:.4f} | "
-        f"max mentions/entity: {stats['max_mentions_per_entity']}"
     )
 
 
@@ -144,9 +123,7 @@ def build_arg_parser(defaults=None):
             "deberta-v3-large",
             "bert",
             "modernbert",
-            "qwen3-4b",
             "qwen3-8b",
-            "qwen2.5-7b",
         ],
         help="Model backbone type",
     )
@@ -232,47 +209,6 @@ def build_arg_parser(defaults=None):
         choices=["cls", "last_token", None],
         help="Sequence pooling strategy for classifier head. Default picks model-specific strategy.",
     )
-    parser.add_argument(
-        "--entity_pooling",
-        type=str,
-        default=defaults["entity_pooling"],
-        choices=["mean", "multi_mention", "query_aware"],
-        help="Entity representation mode before relation attention.",
-    )
-    parser.add_argument(
-        "--prediction_head",
-        type=str,
-        default=defaults["prediction_head"],
-        choices=["cls_pair", "cls_only", "pair_only", "gated"],
-        help="Final prediction head used for diagnostics.",
-    )
-    parser.add_argument(
-        "--consistency_mode",
-        type=str,
-        default=defaults["consistency_mode"],
-        choices=["kl", "sym_kl", "js", "mse"],
-        help="Consistency loss variant for renamed examples.",
-    )
-    parser.add_argument(
-        "--use_relation_conditioning",
-        action=argparse.BooleanOptionalAction,
-        default=defaults["use_relation_conditioning"],
-        help="Enable relation-conditioned FiLM and relation attention biases.",
-    )
-    parser.add_argument(
-        "--edge_supervision_target",
-        type=str,
-        default=defaults["edge_supervision_target"],
-        choices=["separate", "latent"],
-        help="Use separate edge classifier or supervise latent relation logits directly.",
-    )
-    parser.add_argument(
-        "--pair_feature_mode",
-        type=str,
-        default=defaults["pair_feature_mode"],
-        choices=["product", "product_diff"],
-        help="Feature set for directional subject-object and edge classifiers.",
-    )
     return parser
 
 
@@ -315,13 +251,6 @@ def run_training():
         print(f"Selected Model: {args.model_type}")
         print(f"GPU Visible (CUDA_VISIBLE_DEVICES): {os.environ.get('CUDA_VISIBLE_DEVICES', '')}")
         print(f"Strategy: {args.strategy} (rank={rank}, world_size={world_size}, local_rank={local_rank})")
-        print(
-            "Diagnostics: "
-            f"entity_pooling={args.entity_pooling}, prediction_head={args.prediction_head}, "
-            f"relation_conditioning={args.use_relation_conditioning}, "
-            f"edge_target={args.edge_supervision_target}, pair_features={args.pair_feature_mode}, "
-            f"consistency={args.consistency_mode}"
-        )
 
     tokenizer = build_tokenizer(args.model_type, model_name_or_path=args.model_name_or_path)
 
@@ -342,10 +271,6 @@ def run_training():
         augment_seed=999,
     )
     test_ds.data = [d for d in test_ds.data if d is not None]
-
-    if _is_main_process():
-        _print_mention_stats("Train", train_ds)
-        _print_mention_stats("Test", test_ds)
 
     collator = TsraBatchCollator(tokenizer, device, model_type=args.model_type)
 
@@ -395,12 +320,6 @@ def run_training():
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
         pooling=args.pooling,
-        entity_pooling=args.entity_pooling,
-        prediction_head=args.prediction_head,
-        consistency_mode=args.consistency_mode,
-        use_relation_conditioning=args.use_relation_conditioning,
-        edge_supervision_target=args.edge_supervision_target,
-        pair_feature_mode=args.pair_feature_mode,
     )
     if not getattr(model.encoder, "is_loaded_in_4bit", False):
         model = model.to(device)
@@ -409,11 +328,6 @@ def run_training():
         model.entity_attn = model.entity_attn.to(device)
         model.pair_classifier = model.pair_classifier.to(device)
         model.rel_proj = model.rel_proj.to(device)
-        model.query_ctx_proj = model.query_ctx_proj.to(device)
-        model.mention_key_proj = model.mention_key_proj.to(device)
-        model.mention_query_proj = model.mention_query_proj.to(device)
-        model.mention_score = model.mention_score.to(device)
-        model.fusion_logit = model.fusion_logit.to(device)
 
     if args.strategy == "dp":
         if not torch.cuda.is_available():
@@ -498,10 +412,6 @@ def run_training():
             print(f"  Consistent & Correct: {metrics['consistent_and_correct']:.4f}")
             print(f"  Short Hop (2-3):      {metrics['short_hop']:.4f}")
             print(f"  Long Hop (>=6):       {metrics['long_hop']:.4f}")
-            print(f"  Trace Step Acc:       {metrics.get('trace_step_acc', 0.0):.4f}")
-            print(f"  Trace Exact:          {metrics.get('trace_exact', 0.0):.4f}")
-            print(f"  Final Correct/Trace Wrong: {metrics.get('final_correct_trace_wrong', 0.0):.4f}")
-            print(f"  Trace Exact/Final Wrong:   {metrics.get('trace_exact_final_wrong', 0.0):.4f}")
 
     if args.strategy == "ddp" and _is_distributed():
         dist.barrier()

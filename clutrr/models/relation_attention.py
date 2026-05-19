@@ -5,17 +5,10 @@ import torch.nn as nn
 
 
 class RelationConditionedEntityAttention(nn.Module):
-    def __init__(
-        self,
-        hidden_size: int,
-        num_relations: int,
-        dropout: float = 0.1,
-        use_relation_conditioning: bool = True,
-    ):
+    def __init__(self, hidden_size: int, num_relations: int, dropout: float = 0.1):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_relations = num_relations
-        self.use_relation_conditioning = use_relation_conditioning
 
         self.q_proj = nn.Linear(hidden_size, hidden_size)
         self.k_proj = nn.Linear(hidden_size, hidden_size)
@@ -50,17 +43,11 @@ class RelationConditionedEntityAttention(nn.Module):
         entity_embs: torch.Tensor,
         valid_mask: torch.Tensor,
         obj_indices: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         bsz, max_entities, hidden_size = entity_embs.shape
         out = torch.zeros_like(entity_embs)
         batch_scores_hop = torch.full(
             (bsz, max_entities, max_entities),
-            -1e4,
-            device=entity_embs.device,
-            dtype=entity_embs.dtype,
-        )
-        batch_rel_logits = torch.full(
-            (bsz, max_entities, max_entities, self.num_relations),
             -1e4,
             device=entity_embs.device,
             dtype=entity_embs.dtype,
@@ -76,23 +63,17 @@ class RelationConditionedEntityAttention(nn.Module):
             e_j = entities.unsqueeze(0).expand(n_valid, n_valid, hidden_size)
             feats = torch.cat([e_i, e_j, e_i * e_j], dim=-1)
             rel_logits = self.rel_mlp(feats)
-            batch_rel_logits[batch_idx, :n_valid, :n_valid] = rel_logits
             rel_probs = torch.softmax(rel_logits, dim=-1)
 
-            if self.use_relation_conditioning:
-                gamma = torch.matmul(rel_probs, self.rel_gamma.weight)
-                beta = torch.matmul(rel_probs, self.rel_beta.weight)
-            else:
-                gamma = torch.zeros(n_valid, n_valid, hidden_size, device=entity_embs.device, dtype=entity_embs.dtype)
-                beta = torch.zeros_like(gamma)
+            gamma = torch.matmul(rel_probs, self.rel_gamma.weight)
+            beta = torch.matmul(rel_probs, self.rel_beta.weight)
 
             q = self.q_proj(entities)
             k = self.k_proj(entities)
             v = self.v_proj(entities)
 
             scores = torch.matmul(q, k.transpose(0, 1)) / math.sqrt(hidden_size)
-            if self.use_relation_conditioning:
-                scores = scores + torch.matmul(rel_probs, self.rel_bias)
+            scores = scores + torch.matmul(rel_probs, self.rel_bias)
             attn = self.dropout(torch.softmax(scores, dim=-1))
 
             v_expand = v.unsqueeze(0).expand(n_valid, n_valid, hidden_size)
@@ -108,8 +89,7 @@ class RelationConditionedEntityAttention(nn.Module):
             v_h = self.v_hop(entities)
 
             scores_hop = torch.matmul(q_h, k_h.transpose(0, 1)) / math.sqrt(hidden_size)
-            if self.use_relation_conditioning:
-                scores_hop = scores_hop + torch.matmul(rel_probs, self.rel_bias_hop)
+            scores_hop = scores_hop + torch.matmul(rel_probs, self.rel_bias_hop)
             batch_scores_hop[batch_idx, :n_valid, :n_valid] = scores_hop
 
             attn_hop = self.dropout(torch.softmax(scores_hop, dim=-1))
@@ -119,4 +99,4 @@ class RelationConditionedEntityAttention(nn.Module):
 
             out[batch_idx, :n_valid] = self.ln(entities + self.dropout(msg_global + msg_hop))
 
-        return out, batch_scores_hop, batch_rel_logits
+        return out, batch_scores_hop
