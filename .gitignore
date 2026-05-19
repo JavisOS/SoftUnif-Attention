@@ -185,3 +185,10 @@ outputs/
 # Local-only personal files (do not commit)
 .github/copilot-instructions.md
 gpu_run.py
+
+# Local environments and cleanup archives
+.conda/
+TSRA_cleanup_archive/
+# Model checkpoints and tensor caches
+*.safetensors
+*.bin

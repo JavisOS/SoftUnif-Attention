@@ -77,3 +77,21 @@ Example with YAML config:
 
 - `clutrr` and `ruletaker` are peer packages for two different datasets.
 - No root-level compatibility launchers are required; use module entrypoints above.
+
+
+## TSRA-v3 Quick Start
+
+The current mainline TSRA variant is configured in configs/clutrr/train_tsra_v3_roberta.yaml. It uses multi-mention entity pooling, gated fusion between the global sequence head and entity-pair head, and direct supervision of latent relation logits on gold path edges.
+
+Run a fast RoBERTa diagnostic:
+
+    python -m clutrr.cli.train --config configs/clutrr/train_tsra_v3_roberta.yaml
+
+Useful ablation switches are exposed directly by clutrr.cli.train:
+
+    python -m clutrr.cli.train --config configs/clutrr/train_tsra_v3_roberta.yaml --prediction_head cls_only
+    python -m clutrr.cli.train --config configs/clutrr/train_tsra_v3_roberta.yaml --prediction_head pair_only
+    python -m clutrr.cli.train --config configs/clutrr/train_tsra_v3_roberta.yaml --edge_supervision_target separate
+    python -m clutrr.cli.train --config configs/clutrr/train_tsra_v3_roberta.yaml --no-use_relation_conditioning
+
+Large generated artifacts are intentionally not versioned. Experiment logs and checkpoints should live under outputs/, and local datasets/environments under data/ or .conda/.

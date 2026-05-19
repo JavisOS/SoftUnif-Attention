@@ -19,6 +19,46 @@ def _move_batch_to_device(batch: dict, device: torch.device, skip_keys: set[str]
     return moved
 
 
+def _trace_metrics_for_batch(attn_scores, path_node_ids, final_correct_mask):
+    traced = 0
+    step_total = 0
+    step_correct = 0
+    exact_correct = 0
+    final_correct_trace_wrong = 0
+    trace_exact_final_wrong = 0
+
+    for i in range(path_node_ids.size(0)):
+        path = path_node_ids[i]
+        valid_path = path[path != -1]
+        if valid_path.numel() < 2:
+            continue
+        traced += 1
+        src = valid_path[:-1]
+        dst = valid_path[1:]
+        pred_next = torch.argmax(attn_scores[i, src, :], dim=-1)
+        step_ok = pred_next == dst
+        num_steps = int(dst.numel())
+        step_total += num_steps
+        step_correct += int(step_ok.sum().item())
+        exact = bool(step_ok.all().item())
+        if exact:
+            exact_correct += 1
+        final_ok = bool(final_correct_mask[i].item())
+        if final_ok and not exact:
+            final_correct_trace_wrong += 1
+        if exact and not final_ok:
+            trace_exact_final_wrong += 1
+
+    return {
+        "trace_samples": traced,
+        "trace_step_total": step_total,
+        "trace_step_correct": step_correct,
+        "trace_exact_correct": exact_correct,
+        "final_correct_trace_wrong": final_correct_trace_wrong,
+        "trace_exact_final_wrong": trace_exact_final_wrong,
+    }
+
+
 def evaluate_robustness(model, loader, device):
     model.eval()
     base_model = _unwrap_model(model)
@@ -35,6 +75,13 @@ def evaluate_robustness(model, loader, device):
     by_hop_total = {}
     by_hop_correct = {}
 
+    trace_samples = 0
+    trace_step_total = 0
+    trace_step_correct = 0
+    trace_exact_correct = 0
+    final_correct_trace_wrong = 0
+    trace_exact_final_wrong = 0
+
     with torch.no_grad():
         for batch in loader:
             if batch is None:
@@ -45,11 +92,12 @@ def evaluate_robustness(model, loader, device):
             y_target = batch["labels"]
             hops = batch["hops"]
 
-            logits_base, _, _ = base_model.compute_logits(
+            logits_base, _, attn_scores = base_model.compute_logits(
                 input_ids=batch["input_ids"],
                 attention_mask=batch["attention_mask"],
                 entity_spans=batch["entity_spans"],
                 query_indices=batch["query_indices"],
+                entity_mention_spans=batch.get("entity_mention_spans"),
             )
             preds_base = torch.argmax(logits_base, dim=1)
 
@@ -58,6 +106,7 @@ def evaluate_robustness(model, loader, device):
                 attention_mask=batch["aug_attention_mask"],
                 entity_spans=batch["aug_entity_spans"],
                 query_indices=batch["query_indices"],
+                entity_mention_spans=batch.get("aug_entity_mention_spans"),
             )
             preds_mod = torch.argmax(logits_mod, dim=1)
 
@@ -83,6 +132,14 @@ def evaluate_robustness(model, loader, device):
             correct_mod += correct_mod_mask.sum().item()
             consistent += consistent_mask.sum().item()
             consistent_and_correct += (consistent_mask & correct_mask).sum().item()
+
+            trace_batch = _trace_metrics_for_batch(attn_scores, batch["path_node_ids"], correct_mask)
+            trace_samples += trace_batch["trace_samples"]
+            trace_step_total += trace_batch["trace_step_total"]
+            trace_step_correct += trace_batch["trace_step_correct"]
+            trace_exact_correct += trace_batch["trace_exact_correct"]
+            final_correct_trace_wrong += trace_batch["final_correct_trace_wrong"]
+            trace_exact_final_wrong += trace_batch["trace_exact_final_wrong"]
 
             preds_np = preds_base.cpu().numpy()
             targets_np = y_target.cpu().numpy()
@@ -111,9 +168,18 @@ def evaluate_robustness(model, loader, device):
     long_tot = sum([by_hop_total.get(h, 0) for h in range(6, 15)])
     long_acc = long_corr / long_tot if long_tot > 0 else 0
 
+    trace_step_acc = trace_step_correct / trace_step_total if trace_step_total > 0 else 0
+    trace_exact = trace_exact_correct / trace_samples if trace_samples > 0 else 0
+    final_correct_trace_wrong_rate = final_correct_trace_wrong / trace_samples if trace_samples > 0 else 0
+    trace_exact_final_wrong_rate = trace_exact_final_wrong / trace_samples if trace_samples > 0 else 0
+
     print(f"[Stats] Evaluated {total} samples.")
     print(f"  Changed Story Rate:   {changed_story_rate:.4f}")
     print(f"  Changed Query Rate:   {changed_query_rate:.4f}")
+    print(f"  Trace Step Acc:       {trace_step_acc:.4f}")
+    print(f"  Trace Exact:          {trace_exact:.4f}")
+    print(f"  Final Correct/Trace Wrong: {final_correct_trace_wrong_rate:.4f}")
+    print(f"  Trace Exact/Final Wrong:   {trace_exact_final_wrong_rate:.4f}")
 
     return {
         "overall": acc_overall,
@@ -122,4 +188,8 @@ def evaluate_robustness(model, loader, device):
         "consistent_and_correct": prob_robust_correct,
         "short_hop": short_acc,
         "long_hop": long_acc,
+        "trace_step_acc": trace_step_acc,
+        "trace_exact": trace_exact,
+        "final_correct_trace_wrong": final_correct_trace_wrong_rate,
+        "trace_exact_final_wrong": trace_exact_final_wrong_rate,
     }
