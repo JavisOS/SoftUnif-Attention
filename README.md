@@ -79,19 +79,23 @@ Example with YAML config:
 - No root-level compatibility launchers are required; use module entrypoints above.
 
 
-## TSRA-v3 Quick Start
+## CLUTRR TSRA Lines
 
-The current mainline TSRA variant is configured in configs/clutrr/train_tsra_v3_roberta.yaml. It uses multi-mention entity pooling, gated fusion between the global sequence head and entity-pair head, and direct supervision of latent relation logits on gold path edges.
+The reproducible DeBERTa TSRA baseline is configured in `configs/clutrr/train_tsra.yaml`. The sparse latent relation transition algebra experiment is configured in `configs/clutrr/train_tsra_sparse.yaml`.
 
-Run a fast RoBERTa diagnostic:
+Run the baseline:
 
-    python -m clutrr.cli.train --config configs/clutrr/train_tsra_v3_roberta.yaml
+    python -m clutrr.cli.train --config configs/clutrr/train_tsra.yaml
 
-Useful ablation switches are exposed directly by clutrr.cli.train:
+Run the sparse algebraic reasoner:
 
-    python -m clutrr.cli.train --config configs/clutrr/train_tsra_v3_roberta.yaml --prediction_head cls_only
-    python -m clutrr.cli.train --config configs/clutrr/train_tsra_v3_roberta.yaml --prediction_head pair_only
-    python -m clutrr.cli.train --config configs/clutrr/train_tsra_v3_roberta.yaml --edge_supervision_target separate
-    python -m clutrr.cli.train --config configs/clutrr/train_tsra_v3_roberta.yaml --no-use_relation_conditioning
+    python -m clutrr.cli.train --config configs/clutrr/train_tsra_sparse.yaml
+
+Useful sparse-reasoner ablation switches are exposed directly by `clutrr.cli.train`:
+
+    python -m clutrr.cli.train --config configs/clutrr/train_tsra_sparse.yaml --no-use_path_algebra
+    python -m clutrr.cli.train --config configs/clutrr/train_tsra_sparse.yaml --lambda_alg 0 --lambda_eq 0
+    python -m clutrr.cli.train --config configs/clutrr/train_tsra_sparse.yaml --relation_score_mode mlp
+    python -m clutrr.cli.train --config configs/clutrr/train_tsra_sparse.yaml --sparse_top_k 0
 
 Large generated artifacts are intentionally not versioned. Experiment logs and checkpoints should live under outputs/, and local datasets/environments under data/ or .conda/.

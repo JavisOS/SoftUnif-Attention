@@ -41,12 +41,28 @@ BASE_TRAIN_DEFAULTS = {
     "lambda_nexthop": 1.0,
     "lambda_edge": 1.0,
     "lambda_consistency": 5.0,
+    "sparse_top_k": 0,
+    "force_gold_edges": False,
     "use_qlora": False,
     "load_in_4bit": False,
     "lora_r": 16,
     "lora_alpha": 32,
     "lora_dropout": 0.05,
     "pooling": None,
+    "entity_pooling": "mean",
+    "prediction_head": "cls_pair",
+    "consistency_mode": "kl",
+    "use_relation_conditioning": True,
+    "edge_supervision_target": "separate",
+    "pair_feature_mode": "product",
+    "use_path_algebra": False,
+    "path_algebra_steps": 0,
+    "residual_gate_init": -1.5,
+    "lambda_gate": 0.0,
+    "lambda_alg": 0.0,
+    "lambda_eq": 0.0,
+    "relation_score_mode": "mlp",
+    "relation_rank": 64,
 }
 
 
@@ -183,6 +199,18 @@ def build_arg_parser(defaults=None):
         help="Weight for consistency regularization loss",
     )
     parser.add_argument(
+        "--sparse_top_k",
+        type=int,
+        default=defaults["sparse_top_k"],
+        help="Top-k sparse candidate outgoing edges per entity; <=0 keeps all entities.",
+    )
+    parser.add_argument(
+        "--force_gold_edges",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["force_gold_edges"],
+        help="During training, force gold trace edges into the sparse candidate set.",
+    )
+    parser.add_argument(
         "--use_qlora",
         action=argparse.BooleanOptionalAction,
         default=defaults["use_qlora"],
@@ -208,6 +236,96 @@ def build_arg_parser(defaults=None):
         default=defaults["pooling"],
         choices=["cls", "last_token", None],
         help="Sequence pooling strategy for classifier head. Default picks model-specific strategy.",
+    )
+    parser.add_argument(
+        "--entity_pooling",
+        type=str,
+        default=defaults["entity_pooling"],
+        choices=["mean", "multi_mention", "query_aware"],
+        help="Entity representation mode before relation attention.",
+    )
+    parser.add_argument(
+        "--prediction_head",
+        type=str,
+        default=defaults["prediction_head"],
+        choices=["cls_pair", "cls_only", "pair_only", "gated"],
+        help="Final prediction head used for diagnostics.",
+    )
+    parser.add_argument(
+        "--consistency_mode",
+        type=str,
+        default=defaults["consistency_mode"],
+        choices=["kl", "sym_kl", "js", "mse"],
+        help="Consistency loss variant for renamed examples.",
+    )
+    parser.add_argument(
+        "--use_relation_conditioning",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["use_relation_conditioning"],
+        help="Enable relation-conditioned FiLM and relation attention biases.",
+    )
+    parser.add_argument(
+        "--edge_supervision_target",
+        type=str,
+        default=defaults["edge_supervision_target"],
+        choices=["separate", "latent"],
+        help="Use separate edge classifier or supervise sparse latent relation logits directly.",
+    )
+    parser.add_argument(
+        "--pair_feature_mode",
+        type=str,
+        default=defaults["pair_feature_mode"],
+        choices=["product", "product_diff"],
+        help="Feature set for directional subject-object and edge classifiers.",
+    )
+    parser.add_argument(
+        "--use_path_algebra",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["use_path_algebra"],
+        help="Use sparse latent relation transition algebra logits as the main answer path.",
+    )
+    parser.add_argument(
+        "--path_algebra_steps",
+        type=int,
+        default=defaults["path_algebra_steps"],
+        help="Number of sparse relation DP steps; <=0 uses max_entities - 1.",
+    )
+    parser.add_argument(
+        "--residual_gate_init",
+        type=float,
+        default=defaults["residual_gate_init"],
+        help="Initial logit for alpha in z_path + alpha * z_text.",
+    )
+    parser.add_argument(
+        "--lambda_gate",
+        type=float,
+        default=defaults["lambda_gate"],
+        help="Small prior penalty on the residual text gate alpha.",
+    )
+    parser.add_argument(
+        "--lambda_alg",
+        type=float,
+        default=defaults["lambda_alg"],
+        help="Weight for identity/associativity/inverse algebra regularization.",
+    )
+    parser.add_argument(
+        "--lambda_eq",
+        type=float,
+        default=defaults["lambda_eq"],
+        help="Weight for renamed entity/relation/path equivariance regularization.",
+    )
+    parser.add_argument(
+        "--relation_score_mode",
+        type=str,
+        default=defaults["relation_score_mode"],
+        choices=["mlp", "bilinear"],
+        help="Relation scorer: MLP or low-rank factorized bilinear.",
+    )
+    parser.add_argument(
+        "--relation_rank",
+        type=int,
+        default=defaults["relation_rank"],
+        help="Rank for low-rank bilinear relation scoring.",
     )
     return parser
 
@@ -251,6 +369,16 @@ def run_training():
         print(f"Selected Model: {args.model_type}")
         print(f"GPU Visible (CUDA_VISIBLE_DEVICES): {os.environ.get('CUDA_VISIBLE_DEVICES', '')}")
         print(f"Strategy: {args.strategy} (rank={rank}, world_size={world_size}, local_rank={local_rank})")
+        print(
+            "Diagnostics: "
+            f"entity_pooling={args.entity_pooling}, prediction_head={args.prediction_head}, "
+            f"relation_conditioning={args.use_relation_conditioning}, "
+            f"edge_target={args.edge_supervision_target}, pair_features={args.pair_feature_mode}, "
+            f"consistency={args.consistency_mode}, sparse_top_k={args.sparse_top_k}, "
+            f"force_gold_edges={args.force_gold_edges}, path_algebra={args.use_path_algebra}, "
+            f"lambda_gate={args.lambda_gate}, lambda_alg={args.lambda_alg}, lambda_eq={args.lambda_eq}, "
+            f"relation_score={args.relation_score_mode}/r{args.relation_rank}"
+        )
 
     tokenizer = build_tokenizer(args.model_type, model_name_or_path=args.model_name_or_path)
 
@@ -320,6 +448,19 @@ def run_training():
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
         pooling=args.pooling,
+        entity_pooling=args.entity_pooling,
+        prediction_head=args.prediction_head,
+        consistency_mode=args.consistency_mode,
+        use_relation_conditioning=args.use_relation_conditioning,
+        edge_supervision_target=args.edge_supervision_target,
+        pair_feature_mode=args.pair_feature_mode,
+        sparse_top_k=args.sparse_top_k,
+        force_gold_edges=args.force_gold_edges,
+        use_path_algebra=args.use_path_algebra,
+        path_algebra_steps=args.path_algebra_steps,
+        residual_gate_init=args.residual_gate_init,
+        relation_score_mode=args.relation_score_mode,
+        relation_rank=args.relation_rank,
     )
     if not getattr(model.encoder, "is_loaded_in_4bit", False):
         model = model.to(device)
@@ -327,7 +468,8 @@ def run_training():
         model.classifier = model.classifier.to(device)
         model.entity_attn = model.entity_attn.to(device)
         model.pair_classifier = model.pair_classifier.to(device)
-        model.rel_proj = model.rel_proj.to(device)
+        if hasattr(model, "rel_proj"):
+            model.rel_proj = model.rel_proj.to(device)
 
     if args.strategy == "dp":
         if not torch.cuda.is_available():
@@ -358,6 +500,8 @@ def run_training():
         accum_aux = 0.0
         accum_edge = 0.0
         accum_cons = 0.0
+        accum_alg = 0.0
+        accum_eq = 0.0
 
         pbar = _make_train_pbar(train_loader, desc=f"Ep {epoch + 1}")
         for batch in pbar:
@@ -374,6 +518,9 @@ def run_training():
                 lambda1=args.lambda_nexthop,
                 lambda_edge=args.lambda_edge,
                 lambda_cons=args.lambda_consistency,
+                lambda_gate=args.lambda_gate,
+                lambda_alg=args.lambda_alg,
+                lambda_eq=args.lambda_eq,
             )
 
             loss = out["loss"]
@@ -384,12 +531,17 @@ def run_training():
             accum_aux += out["losses"]["nexthop"]
             accum_edge += out["losses"]["edge"]
             accum_cons += out["losses"]["cons"]
+            accum_alg += out["losses"].get("alg", 0.0)
+            accum_eq += out["losses"].get("eq", 0.0)
             pbar.set_postfix(
                 {
                     "L_main": f"{out['losses']['main']:.3f}",
                     "L_aux": f"{out['losses']['nexthop']:.3f}",
                     "L_edge": f"{out['losses']['edge']:.3f}",
                     "L_cons": f"{out['losses']['cons']:.3f}",
+                    "L_alg": f"{out['losses'].get('alg', 0.0):.3f}",
+                    "L_eq": f"{out['losses'].get('eq', 0.0):.3f}",
+                    "alpha": f"{out['losses'].get('residual_alpha', 0.0):.3f}",
                 }
             )
 
@@ -399,7 +551,9 @@ def run_training():
                 f"Epoch {epoch + 1} Done. Loss: {avg_loss:.4f} "
                 f"(Aux: {accum_aux / len(train_loader):.4f}, "
                 f"Edge: {accum_edge / len(train_loader):.4f}, "
-                f"Cons: {accum_cons / len(train_loader):.4f})"
+                f"Cons: {accum_cons / len(train_loader):.4f}, "
+                f"Alg: {accum_alg / len(train_loader):.4f}, "
+                f"Eq: {accum_eq / len(train_loader):.4f})"
             )
 
         if _is_main_process():
