@@ -192,3 +192,23 @@ TSRA_cleanup_archive/
 # Model checkpoints and tensor caches
 *.safetensors
 *.bin
+*.ckpt
+*.pt
+
+# External baseline clones are kept as local experiment dependencies.
+# Do not commit third-party repos, downloaded benchmark data, processed
+# tensors, checkpoints, or run logs from these directories.
+/external_baselines/*
+!/external_baselines/README.md
+!/external_baselines/patches/
+!/external_baselines/patches/**
+/external_baselines/**/*.pkl
+/external_baselines/**/*.jsonl
+/external_baselines/**/*.ckpt
+/external_baselines/**/lightning_logs/
+/external_baselines/**/checkpoints/
+/external_baselines/**/__pycache__/
+
+# Local experiment scratch and generated helper outputs
+*.remote.md
+TSRA_FINAL_EXPERIMENT_REPORT.md
