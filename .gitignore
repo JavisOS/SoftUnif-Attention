@@ -181,6 +181,7 @@ id_ed25519*
 # Experiment artifacts
 outputs/
 *.pth
+*.whl
 
 # Local-only personal files (do not commit)
 .github/copilot-instructions.md
@@ -188,6 +189,7 @@ gpu_run.py
 
 # Local environments and cleanup archives
 .conda/
+.local_artifacts/
 TSRA_cleanup_archive/
 # Model checkpoints and tensor caches
 *.safetensors
@@ -210,5 +212,6 @@ TSRA_cleanup_archive/
 /external_baselines/**/__pycache__/
 
 # Local experiment scratch and generated helper outputs
+.tmp_*
 *.remote.md
 TSRA_FINAL_EXPERIMENT_REPORT.md

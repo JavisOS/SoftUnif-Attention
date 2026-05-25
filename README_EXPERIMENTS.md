@@ -1,5 +1,10 @@
 # Experiment Setup Notes
 
+This file is the lightweight operational index for the TSRA experiment
+workspace. The full result tables and interpretation live in
+`EXPERIMENT_REPORT.md`; this file is meant to answer "where is the data, what
+script runs what, and where are the artifacts?" without duplicating every table.
+
 ## Data
 
 ### CLUTRR
@@ -11,31 +16,56 @@
 - Policy: shallow train on hop 2/3; deep test emphasizes held-out hops >=6.
 - TSRA config: `/root/TSRA/configs/clutrr/train_tsra.yaml`.
 - EdgeTransformer copy: `/root/TSRA/external_baselines/EdgeTransformer/clutrr/data/data_089907f8`.
+- Main outputs: `/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep` and
+  `/vepfs/tsra_outputs/official_external/latest_edge_rat_clutrr_089907f8`.
 
 ### RuleTaker
 
 - Status: ready, already in repo.
 - Native path: `/root/TSRA/data/rule-reasoning-dataset-V2020.2.5.0/original`.
-- Current config: train `depth-1,depth-2`; eval `depth-0,depth-1,depth-2,depth-3,depth-5`.
+- Current TSRA split: shallow train on low proof depth; eval includes depth-3ext
+  and depth-5 style settings where available.
 - GFaiR data path: `/root/TSRA/external_baselines/GFaiR/data/ruletaker_3ext_sat`.
-- TSRA-Prop preliminary outputs: `/root/TSRA/outputs/tsra_prop/ruletaker_gfair_*.json`.
+- Main TSRA outputs:
+  `/vepfs/tsra_outputs/formal_10ep/latest_prop_bert_backbone_seeds/results`,
+  `/vepfs/tsra_outputs/formal_10ep/latest_prop_roberta_backbone_seeds/results`,
+  `/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep/results`, and
+  `/vepfs/tsra_outputs/formal_10ep/latest_prop_deberta_seed1_failed_rerun/results`.
+- External outputs:
+  `/vepfs/tsra_outputs/official_external/latest_gfair_selector2_test_retry`,
+  `/vepfs/tsra_outputs/official_external/gfair_full_20260521_085403`, and
+  `/vepfs/tsra_outputs/official_external/latest_ibr_depth5_retry2`.
 
 ### ProofWriter
 
 - Official source: `https://aristo-data-public.s3.amazonaws.com/proofwriter/proofwriter-dataset-V2020.12.3.zip`.
 - Local staging used: `/private/tmp/tsra_data/proofwriter-dataset-V2020.12.3.zip`.
 - Dev-machine raw path: `/root/TSRA/data/proofwriter/raw/proofwriter-dataset-V2020.12.3`.
-- TOS target to record for reproducibility: `tos://c20250504/wy/data/proofwriter/proofwriter-dataset-V2020.12.3.zip`.
-- TSRA-Prop split: train depth 0/1/2; test depth-3 and depth-5.
-- Outputs: `/root/TSRA/outputs/tsra_prop/proofwriter_*.json`.
+- TOS target to record for reproducibility:
+  `tos://c20250504/wy/data/proofwriter/proofwriter-dataset-V2020.12.3.zip`.
+- TSRA split: train depth 0/1/2; test depth-3 and depth-5.
+- Main TSRA outputs:
+  `/vepfs/tsra_outputs/formal_10ep/latest_prop_bert_backbone_seeds/results`,
+  `/vepfs/tsra_outputs/formal_10ep/latest_prop_roberta_backbone_seeds/results`,
+  `/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep/results`, and
+  `/vepfs/tsra_outputs/formal_10ep/latest_prop_deberta_seed1_failed_rerun/results`.
+- External FaiRR output:
+  `/vepfs/tsra_outputs/official_external/latest_fairr_e2e_retry`.
 
 ### PrOntoQA-OOD
 
 - Official repo: `https://github.com/asaparov/prontoqa`.
 - Raw path: `/root/TSRA/data/prontoqa_ood/raw/prontoqa`.
 - Generated OOD data: `/root/TSRA/data/prontoqa_ood/processed/generated_ood_data`.
-- Official FLAN-T5 outputs: `/root/TSRA/data/prontoqa_ood/processed/model_outputs_ood/flan-t5/latest`.
-- TSRA-Prop output: `/root/TSRA/outputs/tsra_prop/prontoqa_*.json`.
+- Official FLAN-T5 outputs:
+  `/root/TSRA/data/prontoqa_ood/processed/model_outputs_ood/flan-t5/latest`.
+- TSRA split: generated OOD/compositional examples with depth metadata where
+  available; report label accuracy and trace/proof-step selection separately.
+- Main TSRA outputs:
+  `/vepfs/tsra_outputs/formal_10ep/latest_prop_bert_backbone_seeds/results`,
+  `/vepfs/tsra_outputs/formal_10ep/latest_prop_roberta_backbone_seeds/results`,
+  `/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep/results`, and
+  `/vepfs/tsra_outputs/formal_10ep/latest_prop_deberta_seed1_failed_rerun/results`.
 
 ## External Baselines
 
@@ -43,82 +73,86 @@
 
 - Official code: `https://github.com/bergen/EdgeTransformer`.
 - Clone path: `/root/TSRA/external_baselines/EdgeTransformer`.
-- Status: reproduced on CLUTRR `data_089907f8`.
-- Compatibility: old Lightning stack plus `np.Inf=np.inf` shim.
-- Result log: `/root/TSRA/outputs/external_baselines/edge_transformer/data_089907f8_50ep.log`.
-- Summary: overall 0.7618; short 0.9650; long >=6 0.6197.
-- Note: structured graph-edge input, so report as reference baseline.
-
-### FaiRR
-
-- Official code: `https://github.com/INK-USC/FaiRR`.
-- Clone path: `/root/TSRA/external_baselines/FaiRR`.
-- Status: ProofWriter preprocessing, rule-selector debug run, and fact-selector adapted DeBERTa run completed.
-- Adaptation: `roberta-large` mapped to local `microsoft/deberta-base` because official checkpoint was unavailable and cached roberta-base weights were corrupt.
-- Preprocess log: `/root/TSRA/outputs/external_baselines/fairr_process_rule_deberta.log`.
-- Debug log: `/root/TSRA/outputs/external_baselines/fairr_rule_deberta_debug_nockpt.log`.
-- Debug result: test acc 57.89, test macro-F1 0.457.
-- Fact-selector script: `/root/TSRA/scripts/fairr_deberta_selector.py`.
-- Fact-selector output: `/root/TSRA/outputs/external_baselines/fairr_fact_deberta_2k.json`.
-- Fact-selector result: dev top1_acc 0.981; test top1_acc 0.988; test token_acc 0.9956.
+- Dataset: CLUTRR `data_089907f8`.
+- Status: reproduced with EdgeTransformer and RAT reference variants.
+- Current result path:
+  `/vepfs/tsra_outputs/official_external/latest_edge_rat_clutrr_089907f8`.
+- Current headline result: EdgeTransformer overall `0.809951`, short-hop
+  `0.976191`, long-hop `0.684677`.
+- Note: uses structured graph-edge input, so report as a strong reference
+  baseline rather than a raw-text same-backbone comparison.
 
 ### GFaiR
 
 - Official code: `https://github.com/spirit-moon-fly/GFaiR`.
 - Clone path: `/root/TSRA/external_baselines/GFaiR`.
-- Full official blocker: missing `../../model/xlnet` and `../../model/T5`.
-- Smoke script: `/root/TSRA/scripts/gfair_selector2_smoke.py`.
-- Smoke output: `/root/TSRA/outputs/external_baselines/gfair_selector2_smoke.json`.
-- Smoke result: 128 train examples, 32 steps, test top1_acc 0.0703.
-- Adapted DeBERTa script: `/root/TSRA/scripts/gfair_deberta_selector2.py`.
-- Adapted DeBERTa output: `/root/TSRA/outputs/external_baselines/gfair_deberta_selector2_1k_unfrozen.json`.
-- Adapted DeBERTa result: dev top1_acc 0.914; test top1_acc 0.886.
-- Note: adapted GFaiR post-selector component, not full official GFaiR pipeline.
+- Dataset: RuleTaker.
+- Status: official selector2 and full pipeline were run.
+- Selector2 result path:
+  `/vepfs/tsra_outputs/official_external/latest_gfair_selector2_test_retry/test_result_recording.txt`.
+- Full pipeline result path:
+  `/vepfs/tsra_outputs/official_external/gfair_full_20260521_085403/full_inference_ruletaker_3ext_retry_after_reboot_bs8/test_result_recording.txt`.
+- Current headline result: selector2 top1 `0.984560`; full pipeline proof
+  accuracy `0.908629`, faithful score `0.992208`.
 
-### Abstractor / Relational Cross-Attention
+### FaiRR
 
-- Official code: `https://github.com/Awni00/abstractor`.
-- Clone path: `/root/TSRA/external_baselines/abstractor`.
-- Local adapter: `/root/TSRA/scripts/abstractor_rca_clutrr.py`.
-- Dataset: CLUTRR `data_089907f8`.
-- Frozen local result: overall 0.054; short-hop 0.098; long-hop 0.039.
-- Unfrozen 3-epoch smoke: overall 0.157; short-hop 0.434; long-hop 0.110.
-- Output: `/root/TSRA/outputs/external_baselines/abstractor_rca_clutrr_unfrozen_3ep.json`.
-- Note: unfrozen run learns shallow CLUTRR better, but remains an adapted raw-text smoke rather than an official reproduction.
+- Official code: `https://github.com/INK-USC/FaiRR`.
+- Clone path: `/root/TSRA/external_baselines/FaiRR`.
+- Dataset: ProofWriter.
+- Status: end-to-end official-style run completed.
+- Current result path:
+  `/vepfs/tsra_outputs/official_external/latest_fairr_e2e_retry`.
+- Current headline result: answer accuracy `98.403099`, proof accuracy
+  `97.174721`.
 
-### Dual Attention Transformer
+### IBR
 
-- Official code: `https://github.com/Awni00/dual-attention`.
-- Clone path: `/root/TSRA/external_baselines/dual-attention`.
-- Local adapter: `/root/TSRA/scripts/dual_attention_clutrr.py`.
-- Dataset: CLUTRR `data_089907f8`.
-- Frozen result: overall 0.065; short-hop 0.000; long-hop 0.074.
-- Unfrozen 3-epoch smoke: overall 0.255; short-hop 0.958; long-hop 0.142.
-- Output: `/root/TSRA/outputs/external_baselines/dual_attention_clutrr_unfrozen_3ep.json`.
-- Note: uses official PyTorch `DualAttention` module with local CLUTRR raw-text adapter; unfrozen run learns shallow train distribution but deep generalization remains weak.
+- Clone path: `/root/TSRA/external_baselines/IBR`.
+- Dataset: RuleTaker depth-5.
+- Status: completed as an additional proof-reasoning reference baseline.
+- Current result path:
+  `/vepfs/tsra_outputs/official_external/latest_ibr_depth5_retry2/output/test_records.txt`.
+- Current headline result: QA `0.994153`, proof `0.937416`, full `0.937169`.
 
-### MAC-style Compositional Attention
+### NLProofS
 
-- Related paper family: MAC / compositional attention; also appears as `mac.yaml` in the official CLUTRR baseline repo.
-- Official CLUTRR baseline repo: `https://github.com/koustuvsinha/clutrr-baselines`.
-- Clone path: `/root/TSRA/external_baselines/clutrr-baselines`.
-- Official blocker: old missing dependencies (`addict`, `comet_ml`, `torch_geometric`, `pytorch_pretrained_bert`).
-- Local adapter: `/root/TSRA/scripts/mac_attention_clutrr.py`.
-- Dataset: CLUTRR `data_089907f8`.
-- Result: overall 0.217; short-hop 0.657; long-hop 0.128.
-- Output: `/root/TSRA/outputs/external_baselines/mac_attention_clutrr_20ep.json`.
-- Note: more reliable than DAT/Abstractor smoke adapters because training loss clearly decreases, but still adapted rather than official reproduction.
+- Clone path: `/root/TSRA/external_baselines/NLProofS`.
+- Dataset: RuleTaker / ProofWriter-style depth-3ext data.
+- Status: training is complete; formal test is running from the trained
+  checkpoint after a dev-machine shutdown interrupted the previous test pass.
+- Current retry symlink:
+  `/vepfs/tsra_outputs/official_external/latest_nlproofs_ruletaker_test`.
+- Do not cite a final test score until a `results_test*.json` file appears.
 
-## TSRA-Prop Preliminary Runs
+### Diagnostic Attention/Transformer Baselines
 
-- Script: `/root/TSRA/scripts/generic_tsra_prop.py`.
-- ProofWriter: depth-3 trace@1 improves 0.1825 -> 0.2436; depth-5 not improved.
-- RuleTaker: dev trace@1 improves 0.0861 -> 0.1236; test not improved.
-- PrOntoQA-OOD: classification accuracy is degenerate; trace@1 did not improve.
-- These are preliminary coverage runs, not final paper-quality TSRA numbers.
+- Abstractor / Relational Cross-Attention:
+  `/root/TSRA/scripts/abstractor_rca_clutrr.py`.
+- Dual Attention Transformer:
+  `/root/TSRA/scripts/dual_attention_clutrr.py`.
+- MAC-style compositional attention:
+  `/root/TSRA/scripts/mac_attention_clutrr.py`.
+- Dataset for these adapters: CLUTRR `data_089907f8`.
+- These are adapted raw-text diagnostics, not official reproductions; use them
+  to discuss shallow-vs-deep generalization behavior only with that caveat.
+
+## Script Layout
+
+- `scripts/README.md`: maintained index for experiment launchers.
+- `scripts/formal_tsra_10ep_supervisor.sh`: formal 10-epoch CLUTRR TSRA
+  ablation queue.
+- `scripts/transformer_tsra_prop.py`: shared TSRA proposition/proof-step runner
+  for ProofWriter, RuleTaker, and PrOntoQA.
+- `scripts/run_*`: thin launchers for formal TSRA and external-baseline runs.
+- `external_baselines/README.md`: index of local third-party workspaces.
 
 ## Artifact Policy
 
-- Do not commit large data, checkpoints, third-party `.git` histories, or logs.
-- Checkpoints generated by debug runs should be deleted after metrics are recorded.
-- Current root disk is tight (about 98% used); avoid new full checkpoints until storage is freed.
+- Commit code, configuration, report files, and small reproducibility notes.
+- Do not commit benchmark data, checkpoints, third-party `.git` histories, run
+  logs, generated tensors, local virtual environments, or platform-specific
+  wheels.
+- Keep large data, checkpoints, and logs under `/vepfs/tsra_outputs` or the
+  ignored local dataset/baseline directories.
+- Root-level scratch files should use `.tmp_*` and remain ignored.

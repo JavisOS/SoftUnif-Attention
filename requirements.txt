@@ -32,7 +32,8 @@ matplotlib
 seaborn
 sentencepiece
 datasets
-# ./scallopy-0.1.9-cp310-cp310-manylinux_2_31_x86_64.whl
+# Scallopy is only needed for solver-style external baselines. Keep any
+# platform-specific wheel outside git and install it manually when required.
 
 
 openai

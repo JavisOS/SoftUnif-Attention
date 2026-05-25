@@ -22,7 +22,7 @@ Evaluation emphasizes shallow-train / deep-test settings:
 
 ## 0. Latest Status Snapshot
 
-Updated on **2026-05-25 11:51 UTC**. This is the current authoritative status for the experiment report. Older "live update" notes below are retained only as execution history and should not be cited over this section.
+Updated on **2026-05-25 12:35 UTC**. This is the current authoritative status for the experiment report. Older "live update" notes below are retained only as execution history and should not be cited over this section.
 
 ### Running Jobs
 
@@ -30,8 +30,8 @@ Updated on **2026-05-25 11:51 UTC**. This is the current authoritative status fo
   `/vepfs/tsra_outputs/official_external/latest_nlproofs_ruletaker/prover/lightning_logs/version_0/checkpoints/epoch=19-step=16940.ckpt`.
 - Current retry path:
   `/vepfs/tsra_outputs/official_external/latest_nlproofs_ruletaker_test`.
-- Current progress at the latest check: about `1062/17580` test batches (`~6%`) after restart. No final `results_test*.json` exists yet.
-- GPU keepalive is active on GPU1-7 using `gpu_run.py`; NLProofS is on GPU0.
+- Current progress at the latest check: about `1355/17580` test batches (`~8%`) after restart. No final `results_test*.json` exists yet.
+- GPU keepalive is active on GPU1-4 using `gpu_run.py`; NLProofS is on GPU0. GPUs 5-7 are intentionally idle.
 
 ### Completed Main TSRA/Backbone Runs
 
