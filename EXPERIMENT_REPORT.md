@@ -44,14 +44,20 @@ All planned TSRA/backbone runs for **CLUTRR, ProofWriter, RuleTaker, and PrOntoQ
 | ProofWriter | BERT | TSRA | 0,1 | depth-3 `0.9635/0.9591`; depth-5 `0.8952/0.8873`. |
 | ProofWriter | RoBERTa | baseline | 0,1 | depth-3 `0.9406/0.7288`; depth-5 `0.8507/0.7160`. |
 | ProofWriter | RoBERTa | TSRA | 0,1 | depth-3 `0.9322/0.9565`; depth-5 `0.8386/0.8698`. |
+| ProofWriter | DeBERTa | baseline | 0 | depth-3 `0.9473`; depth-5 `0.8855`. |
+| ProofWriter | DeBERTa | TSRA | 0,1 | depth-3 `0.9479/0.9454`; depth-5 `0.8550/0.8495`; trace@1 strongly improves. |
 | RuleTaker | BERT | baseline | 0,1 | test accuracy `0.9608/0.9638`. |
 | RuleTaker | BERT | TSRA | 0,1 | test accuracy `0.9637/0.9630`. |
 | RuleTaker | RoBERTa | baseline | 0,1 | test accuracy `0.9564/0.9587`. |
 | RuleTaker | RoBERTa | TSRA | 0,1 | test accuracy `0.9618/0.9604`. |
+| RuleTaker | DeBERTa | baseline | 0,1 | test accuracy `0.7215/0.7215`. |
+| RuleTaker | DeBERTa | TSRA | 0,1 | test accuracy `0.9646/0.9676`. |
 | PrOntoQA-OOD | BERT | baseline | 0,1 | label acc `1.0/1.0`; trace@1 `0.1767/0.2000`. |
 | PrOntoQA-OOD | BERT | TSRA | 0,1 | label acc `1.0/1.0`; trace@1 `0.5100/0.4300`. |
 | PrOntoQA-OOD | RoBERTa | baseline | 0,1 | label acc `1.0/1.0`; trace@1 `0.1733/0.2067`. |
 | PrOntoQA-OOD | RoBERTa | TSRA | 0,1 | label acc `1.0/1.0`; trace@1 `0.3867/0.5167`. |
+| PrOntoQA-OOD | DeBERTa | baseline | 0,1 | label acc `1.0/1.0`; trace@1 `0.2300/0.2933`. |
+| PrOntoQA-OOD | DeBERTa | TSRA | 0,1 | label acc `1.0/1.0`; trace@1 `0.6233/0.3667`. |
 
 ### Completed CLUTRR TSRA Ablation
 
@@ -384,45 +390,70 @@ Interpretation:
 
 ## 5. TSRA Coverage Beyond CLUTRR
 
-In addition to the existing CLUTRR TSRA results, I added a shared DeBERTa-base TSRA-Prop runner:
+In addition to the native CLUTRR TSRA pipeline, the repository now has a shared TSRA-Prop runner for ProofWriter, RuleTaker, and PrOntoQA-OOD:
 
 - **Script:** `/root/TSRA/scripts/transformer_tsra_prop.py`.
-- **Backbone:** `microsoft/deberta-base`.
+- **Backbones run formally:** DeBERTa, RoBERTa, and BERT.
 - **Design:** same encoder for baseline and TSRA; trace labels supervise sentence-selection logits during training only.
 - **Test-time policy:** raw context/query only; no gold trace/path/proof is provided at inference.
 
-These runs are useful for coverage and diagnostics, but they should be labeled preliminary because they use small limits and simplified sentence-level proof selection.
+Early small-limit TSRA-Prop runs have been superseded by formal 10-epoch runs. The tables below are the current results to cite.
 
-### ProofWriter DeBERTa TSRA-Prop
+### ProofWriter Formal TSRA-Prop
 
-| Model | Train depth | Test depth | Accuracy | Trace@1 | Notes |
-|---|---|---|---:|---:|---|
-| DeBERTa baseline | 0/1/2 | depth-3 | 0.720 | 0.378 | small-limit run |
-| DeBERTa+TSRA | 0/1/2 | depth-3 | 0.720 | 0.288 | not improved on D3 |
-| DeBERTa baseline | 0/1/2 | depth-5 | 0.720 | 0.071 | deep test |
-| DeBERTa+TSRA | 0/1/2 | depth-5 | 0.720 | 0.143 | trace selection improves on D5 |
+| Backbone | Model | Seed | Depth-3 Acc | Depth-5 Acc | Depth-3 Trace@1 | Depth-5 Trace@1 | Notes |
+|---|---|---:|---:|---:|---:|---:|---|
+| BERT | baseline | 0 | 0.9629 | 0.8899 | 0.1795 | 0.1392 | formal 10ep |
+| BERT | baseline | 1 | 0.9577 | 0.8728 | 0.2106 | 0.1512 | formal 10ep |
+| BERT | TSRA | 0 | 0.9635 | 0.8952 | 0.8330 | 0.7834 | formal 10ep |
+| BERT | TSRA | 1 | 0.9591 | 0.8873 | 0.8298 | 0.7848 | formal 10ep |
+| RoBERTa | baseline | 0 | 0.9406 | 0.8507 | 0.2112 | 0.1876 | formal 10ep |
+| RoBERTa | baseline | 1 | 0.7288 | 0.7160 | 0.2027 | 0.1521 | unstable seed |
+| RoBERTa | TSRA | 0 | 0.9322 | 0.8386 | 0.8487 | 0.7966 | formal 10ep |
+| RoBERTa | TSRA | 1 | 0.9565 | 0.8698 | 0.8423 | 0.7928 | formal 10ep |
+| DeBERTa | baseline | 0 | 0.9473 | 0.8855 | 0.3145 | 0.1937 | formal 10ep |
+| DeBERTa | TSRA | 0 | 0.9479 | 0.8550 | 0.7875 | 0.7433 | formal 10ep |
+| DeBERTa | TSRA | 1 | 0.9454 | 0.8495 | 0.8365 | 0.7854 | seed-1 rerun |
 
-### RuleTaker DeBERTa TSRA-Prop
+### RuleTaker Formal TSRA-Prop
 
-| Model | Split | Accuracy | Trace@1 | Notes |
-|---|---|---:|---:|---|
-| DeBERTa baseline | dev | 0.705 | 0.125 | small-limit run |
-| DeBERTa+TSRA | dev | 0.705 | 0.325 | trace-selection improvement |
-| DeBERTa baseline | test | 0.720 | 0.157 | small-limit run |
-| DeBERTa+TSRA | test | 0.720 | 0.229 | trace-selection improvement |
+| Backbone | Model | Seed | Test Acc | Dev Acc | Dev Trace@1 | Notes |
+|---|---|---:|---:|---:|---:|---|
+| BERT | baseline | 0 | 0.9608 | 0.9560 | 0.1553 | formal 10ep |
+| BERT | baseline | 1 | 0.9638 | 0.9605 | 0.1681 | formal 10ep |
+| BERT | TSRA | 0 | 0.9637 | 0.9582 | 0.8386 | formal 10ep |
+| BERT | TSRA | 1 | 0.9630 | 0.9609 | 0.8387 | formal 10ep |
+| RoBERTa | baseline | 0 | 0.9564 | 0.9518 | 0.1151 | formal 10ep |
+| RoBERTa | baseline | 1 | 0.9587 | 0.9542 | 0.1726 | formal 10ep |
+| RoBERTa | TSRA | 0 | 0.9618 | 0.9581 | 0.8356 | formal 10ep |
+| RoBERTa | TSRA | 1 | 0.9604 | 0.9582 | 0.8419 | formal 10ep |
+| DeBERTa | baseline | 0 | 0.7215 | 0.7154 | 0.1732 | formal 10ep |
+| DeBERTa | baseline | 1 | 0.7215 | 0.7154 | 0.1627 | seed-1 rerun |
+| DeBERTa | TSRA | 0 | 0.9646 | 0.9599 | 0.2444 | formal 10ep |
+| DeBERTa | TSRA | 1 | 0.9676 | 0.9637 | 0.8424 | seed-1 rerun |
 
-### PrOntoQA-OOD DeBERTa TSRA-Prop
+### PrOntoQA-OOD Formal TSRA-Prop
 
-| Model | OOD accuracy | Trace@1 | Notes |
-|---|---:|---:|---|
-| DeBERTa baseline | 1.000 | 0.189 | binary label setup is degenerate |
-| DeBERTa+TSRA | 1.000 | 0.117 | current adapter/metric not adequate |
+| Backbone | Model | Seed | OOD Label Acc | Trace@1 | Notes |
+|---|---|---:|---:|---:|---|
+| BERT | baseline | 0 | 1.0000 | 0.1767 | label metric degenerate |
+| BERT | baseline | 1 | 1.0000 | 0.2000 | label metric degenerate |
+| BERT | TSRA | 0 | 1.0000 | 0.5100 | trace metric improves |
+| BERT | TSRA | 1 | 1.0000 | 0.4300 | trace metric improves |
+| RoBERTa | baseline | 0 | 1.0000 | 0.1733 | label metric degenerate |
+| RoBERTa | baseline | 1 | 1.0000 | 0.2067 | label metric degenerate |
+| RoBERTa | TSRA | 0 | 1.0000 | 0.3867 | trace metric improves |
+| RoBERTa | TSRA | 1 | 1.0000 | 0.5167 | trace metric improves |
+| DeBERTa | baseline | 0 | 1.0000 | 0.2300 | label metric degenerate |
+| DeBERTa | baseline | 1 | 1.0000 | 0.2933 | label metric degenerate |
+| DeBERTa | TSRA | 0 | 1.0000 | 0.6233 | trace metric improves |
+| DeBERTa | TSRA | 1 | 1.0000 | 0.3667 | trace metric improves less than seed0 |
 
 Interpretation:
 
-- ProofWriter and RuleTaker show that the TSRA training objective can be applied beyond CLUTRR.
-- The strongest preliminary signals are RuleTaker trace selection and ProofWriter depth-5 trace selection.
-- PrOntoQA requires a better non-degenerate metric and task adapter before it can support final claims.
+- ProofWriter shows the cleanest BERT same-backbone gain: TSRA improves depth-5 accuracy in both seeds while strongly improving trace@1.
+- RuleTaker shows very large DeBERTa gain and smaller but stable BERT/RoBERTa gains.
+- PrOntoQA label accuracy is degenerate, but trace@1 improves consistently for BERT/RoBERTa and partly for DeBERTa.
 
 ## 6. Consolidated Results Tables
 
@@ -447,25 +478,40 @@ Key CLUTRR takeaway:
 
 | Model | Train depth | Test depth / task | Result | Paper-use status |
 |---|---|---|---|---|
-| DeBERTa baseline | 0/1/2 | depth-5 | acc 0.720; trace@1 0.071 | preliminary |
-| DeBERTa+TSRA | 0/1/2 | depth-5 | acc 0.720; trace@1 0.143 | preliminary TSRA signal |
-| FaiRR fact-selector adapted | official processed selector data | 1000 eval | test top1_acc 0.988 | component baseline |
+| BERT baseline | 0/1/2 | depth-5 | acc `0.8899/0.8728` | same-backbone baseline |
+| BERT+TSRA | 0/1/2 | depth-5 | acc `0.8952/0.8873`; trace@1 `0.7834/0.7848` | strongest same-backbone TSRA signal |
+| RoBERTa baseline | 0/1/2 | depth-5 | acc `0.8507/0.7160` | unstable seed1 |
+| RoBERTa+TSRA | 0/1/2 | depth-5 | acc `0.8386/0.8698`; trace@1 `0.7966/0.7928` | stabilizes trace selection |
+| DeBERTa baseline | 0/1/2 | depth-5 | acc `0.8855`; trace@1 `0.1937` | seed0 baseline |
+| DeBERTa+TSRA | 0/1/2 | depth-5 | acc `0.8550/0.8495`; trace@1 `0.7433/0.7854` | trace improves, label acc lower |
+| FaiRR end-to-end | official | test | answer acc `98.403`; proof acc `97.175` | official external baseline |
 
 ### RuleTaker
 
 | Model | Setting | Result | Paper-use status |
 |---|---|---|---|
-| DeBERTa baseline | GFaiR data, test | acc 0.720; trace@1 0.157 | preliminary |
-| DeBERTa+TSRA | GFaiR data, test | acc 0.720; trace@1 0.229 | preliminary TSRA signal |
-| GFaiR Selector2 adapted DeBERTa | RuleTaker post-selector | test top1_acc 0.886 | component baseline |
+| BERT baseline | GFaiR data, test | acc `0.9608/0.9638` | same-backbone baseline |
+| BERT+TSRA | GFaiR data, test | acc `0.9637/0.9630` | tied/small gain |
+| RoBERTa baseline | GFaiR data, test | acc `0.9564/0.9587` | same-backbone baseline |
+| RoBERTa+TSRA | GFaiR data, test | acc `0.9618/0.9604` | small gain |
+| DeBERTa baseline | GFaiR data, test | acc `0.7215/0.7215` | weak baseline in this adapter |
+| DeBERTa+TSRA | GFaiR data, test | acc `0.9646/0.9676` | strong TSRA gain |
+| GFaiR selector2 official XLNet | RuleTaker | top1 `0.9846`; top2 `0.9979` | official external component |
+| GFaiR full official pipeline | RuleTaker | proof_acc_total `0.9086`; faithful_total `0.9922` | official external pipeline |
+| IBR | RuleTaker depth-5 | full `0.9372`; proof `0.9374` | official external baseline |
+| NLProofS | RuleTaker depth-3ext | running | final test pending |
 
 ### PrOntoQA-OOD
 
 | Model/reference | Setting | Result | Paper-use status |
 |---|---|---|---|
 | Official FLAN-T5 output analysis | 4-hop OOD composed | strict proof 0.01; relaxed proof 0.35 | reference baseline |
-| DeBERTa baseline | current TSRA-Prop adapter | acc 1.000; trace@1 0.189 | diagnostic only |
-| DeBERTa+TSRA | current TSRA-Prop adapter | acc 1.000; trace@1 0.117 | diagnostic only |
+| BERT baseline | OOD generated split | acc `1.000`; trace@1 `0.1767/0.2000` | label metric degenerate |
+| BERT+TSRA | OOD generated split | acc `1.000`; trace@1 `0.5100/0.4300` | trace metric improves |
+| RoBERTa baseline | OOD generated split | acc `1.000`; trace@1 `0.1733/0.2067` | label metric degenerate |
+| RoBERTa+TSRA | OOD generated split | acc `1.000`; trace@1 `0.3867/0.5167` | trace metric improves |
+| DeBERTa baseline | OOD generated split | acc `1.000`; trace@1 `0.2300/0.2933` | label metric degenerate |
+| DeBERTa+TSRA | OOD generated split | acc `1.000`; trace@1 `0.6233/0.3667` | trace metric partly improves |
 
 ## 7. Main Experimental Interpretation
 
