@@ -53,6 +53,47 @@ All planned TSRA/backbone runs for **CLUTRR, ProofWriter, RuleTaker, and PrOntoQ
 | PrOntoQA-OOD | RoBERTa | baseline | 0,1 | label acc `1.0/1.0`; trace@1 `0.1733/0.2067`. |
 | PrOntoQA-OOD | RoBERTa | TSRA | 0,1 | label acc `1.0/1.0`; trace@1 `0.3867/0.5167`. |
 
+### Completed CLUTRR TSRA Ablation
+
+The formal CLUTRR ablation queue is complete under `/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep`. It includes DeBERTa and RoBERTa with seeds 0/1 for:
+
+- `full`: label + trace/next-hop supervision + consistency setting used by the formal TSRA run.
+- `label_only`: same backbone trained without trace/next-hop supervision.
+- `no_consistency`: trace/next-hop supervision retained, consistency component disabled.
+
+The table below reports the **best logged evaluation point** from the 10-epoch queue for each seed; final-epoch values remain in the `.done` logs and can be used for a stricter appendix table.
+
+| Backbone | Variant | Seed | Overall | Short-hop | Long-hop >=6 |
+|---|---|---:|---:|---:|---:|
+| DeBERTa | full | 0 | 0.6475 | 0.8279 | 0.4545 |
+| DeBERTa | full | 1 | 0.6030 | 0.8117 | 0.3930 |
+| DeBERTa | label_only | 0 | 0.4904 | 0.7045 | 0.3155 |
+| DeBERTa | label_only | 1 | 0.4677 | 0.6396 | 0.3743 |
+| DeBERTa | no_consistency | 0 | 0.6213 | 0.8182 | 0.4278 |
+| DeBERTa | no_consistency | 1 | 0.6204 | 0.8279 | 0.3797 |
+| RoBERTa | full | 0 | 0.5253 | 0.7013 | 0.3690 |
+| RoBERTa | full | 1 | 0.5297 | 0.7435 | 0.3369 |
+| RoBERTa | label_only | 0 | 0.4337 | 0.6234 | 0.3289 |
+| RoBERTa | label_only | 1 | 0.4948 | 0.6818 | 0.3396 |
+| RoBERTa | no_consistency | 0 | 0.5951 | 0.7792 | 0.4118 |
+| RoBERTa | no_consistency | 1 | 0.5628 | 0.7468 | 0.3957 |
+
+Mean over seeds:
+
+| Backbone | Variant | Overall | Short-hop | Long-hop >=6 |
+|---|---|---:|---:|---:|
+| DeBERTa | full | 0.6253 | 0.8198 | 0.4238 |
+| DeBERTa | label_only | 0.4791 | 0.6721 | 0.3449 |
+| DeBERTa | no_consistency | 0.6209 | 0.8231 | 0.4038 |
+| RoBERTa | full | 0.5275 | 0.7224 | 0.3530 |
+| RoBERTa | label_only | 0.4643 | 0.6526 | 0.3343 |
+| RoBERTa | no_consistency | 0.5790 | 0.7630 | 0.4038 |
+
+Interpretation:
+
+- The strongest and most consistent ablation signal is **trace/next-hop supervision vs label-only**. DeBERTa improves from `0.4791` to `0.6253` overall and from `0.3449` to `0.4238` on long-hop; RoBERTa improves from `0.4643` to `0.5275` overall.
+- The consistency component is not uniformly positive in these reruns. For DeBERTa, `full` and `no_consistency` are close; for RoBERTa, `no_consistency` is higher than `full`. This should be reported honestly: the core evidence supports trace-supervised step selection, while the consistency term needs more careful tuning before being claimed as essential.
+
 Interpretation for the current paper draft:
 
 - On **ProofWriter**, BERT+TSRA gives the cleanest stable improvement over BERT baseline, especially at depth-5.
