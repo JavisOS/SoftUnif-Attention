@@ -20,20 +20,71 @@ Evaluation emphasizes shallow-train / deep-test settings:
 - test on longer chains, deeper proof depth, or OOD systematic/compositional splits;
 - report hop/depth grouped metrics, not only overall accuracy.
 
-## 0. Live External Baseline Update
+## 0. Latest Status Snapshot
 
-Updated on 2026-05-21 12:30 server time.
+Updated on **2026-05-25 11:51 UTC**. This is the current authoritative status for the experiment report. Older "live update" notes below are retained only as execution history and should not be cited over this section.
 
-- **GFaiR Selector2 official XLNet on RuleTaker:** test completed on 40,867 examples. Top-1 accuracy is `0.9845596691707246`; top-2 accuracy is `0.9978956125969609`; invalid ratio is `0.0005969115522889963`. Result path: `/vepfs/tsra_outputs/official_external/latest_gfair_selector2_test_retry/test_result_recording.txt`.
-- **GFaiR full official pipeline:** preprocessing completed. Convertor training is still running on GPU2; reasoner training is still running on GPU4. At the latest check, reasoner was about 69% through its current training pass; convertor is still active. The driver is set to launch full RuleTaker inference on GPU5 after both modules finish, so it will not collide with the TSRA seed=1 queue on GPU7. Path: `/vepfs/tsra_outputs/official_external/latest_gfair_full`.
-- **NLProofS on RuleTaker depth-3ext:** official code is now patched only for environment compatibility: local T5/RoBERTa checkpoint paths, torchmetrics API, NumPy 2 `np.Inf`, and Lightning scheduler stepping. The current retry is running with prover on GPU1 and verifier on GPU6. Prover is training with T5-large; verifier is training with RoBERTa-large and GPU6 is fully utilized. Path: `/vepfs/tsra_outputs/official_external/latest_nlproofs_ruletaker`; logs: `logs/prover_train.log`, `logs/verifier_train.log`.
-- **IBR on RuleTaker depth-5:** the first retry trained for part of an epoch but failed because the installed NLTK `punkt_tab` resource is a corrupt zip. The fallback tokenizer has now been patched to catch runtime NLTK failures, and IBR has been restarted at `/vepfs/tsra_outputs/official_external/latest_ibr_depth5_retry`. It is training again, but still appears mostly CPU-bound despite `CUDA_VISIBLE_DEVICES=5`.
-- **TSRA-Prop DeBERTa seed=1 retry on ProofWriter/RuleTaker/PrOntoQA:** a formal 10-epoch queue is running on GPU7 to supplement the completed seed-0 DeBERTa runs for the three non-CLUTRR datasets. It is currently on `proofwriter_deberta_baseline_seed1_10ep`. Path: `/vepfs/tsra_outputs/formal_10ep/latest_prop_deberta_seed1_gpu7_retry`.
-- **FaiRR end-to-end on ProofWriter:** full rule-selector + fact-selector + reasoner inference completed with local RoBERTa-large/T5-large checkpoints. Test answer accuracy is `98.4030990600586`; proof accuracy is `97.17472076416016`. Path: `/vepfs/tsra_outputs/official_external/latest_fairr_e2e_retry`.
-- **EdgeTransformer on CLUTRR `data_089907f8`:** completed. Unweighted per-hop overall accuracy is `0.809951`; short-hop 2/3 accuracy is `0.976191`; long-hop 6-10 accuracy is `0.684677`. Per-hop accuracies: 2=`1.000000`, 3=`0.952381`, 4=`1.000000`, 5=`0.913793`, 6=`0.831776`, 7=`0.798611`, 8=`0.633333`, 9=`0.588235`, 10=`0.571429`. Path: `/vepfs/tsra_outputs/official_external/latest_edge_rat_clutrr_089907f8`.
-- **RAT on CLUTRR `data_089907f8`:** completed as an additional relation-aware Transformer baseline. Unweighted per-hop overall accuracy is `0.575493`; short-hop 2/3 accuracy is `0.976191`; long-hop 6-10 accuracy is `0.348255`. Per-hop accuracies: 2=`1.000000`, 3=`0.952381`, 4=`0.842105`, 5=`0.643678`, 6=`0.448598`, 7=`0.451389`, 8=`0.286667`, 9=`0.319328`, 10=`0.235294`.
+### Running Jobs
 
-## 0.1 Cross-Dataset Applicability of External Baselines
+- **NLProofS formal RuleTaker test is still running.** The previous full test was interrupted by a dev-machine shutdown at about `15826/17580` examples and did not write a final result file. It was restarted from the trained prover checkpoint at:
+  `/vepfs/tsra_outputs/official_external/latest_nlproofs_ruletaker/prover/lightning_logs/version_0/checkpoints/epoch=19-step=16940.ckpt`.
+- Current retry path:
+  `/vepfs/tsra_outputs/official_external/latest_nlproofs_ruletaker_test`.
+- Current progress at the latest check: about `1062/17580` test batches (`~6%`) after restart. No final `results_test*.json` exists yet.
+- GPU keepalive is active on GPU1-7 using `gpu_run.py`; NLProofS is on GPU0.
+
+### Completed Main TSRA/Backbone Runs
+
+All planned TSRA/backbone runs for **CLUTRR, ProofWriter, RuleTaker, and PrOntoQA-OOD** are complete except for the optional NLProofS external baseline test result. Formal 10-epoch BERT and RoBERTa seed queues are complete; DeBERTa formal main and seed-1 reruns are complete.
+
+| Dataset | Backbone | Model | Seeds | Main Result |
+|---|---|---|---:|---|
+| CLUTRR `data_089907f8` | DeBERTa/RoBERTa | TSRA ablations | 0/1 where available | Formal CLUTRR ablation queue complete under `/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep`. |
+| ProofWriter | BERT | baseline | 0,1 | depth-3 `0.9629/0.9577`; depth-5 `0.8899/0.8728`. |
+| ProofWriter | BERT | TSRA | 0,1 | depth-3 `0.9635/0.9591`; depth-5 `0.8952/0.8873`. |
+| ProofWriter | RoBERTa | baseline | 0,1 | depth-3 `0.9406/0.7288`; depth-5 `0.8507/0.7160`. |
+| ProofWriter | RoBERTa | TSRA | 0,1 | depth-3 `0.9322/0.9565`; depth-5 `0.8386/0.8698`. |
+| RuleTaker | BERT | baseline | 0,1 | test accuracy `0.9608/0.9638`. |
+| RuleTaker | BERT | TSRA | 0,1 | test accuracy `0.9637/0.9630`. |
+| RuleTaker | RoBERTa | baseline | 0,1 | test accuracy `0.9564/0.9587`. |
+| RuleTaker | RoBERTa | TSRA | 0,1 | test accuracy `0.9618/0.9604`. |
+| PrOntoQA-OOD | BERT | baseline | 0,1 | label acc `1.0/1.0`; trace@1 `0.1767/0.2000`. |
+| PrOntoQA-OOD | BERT | TSRA | 0,1 | label acc `1.0/1.0`; trace@1 `0.5100/0.4300`. |
+| PrOntoQA-OOD | RoBERTa | baseline | 0,1 | label acc `1.0/1.0`; trace@1 `0.1733/0.2067`. |
+| PrOntoQA-OOD | RoBERTa | TSRA | 0,1 | label acc `1.0/1.0`; trace@1 `0.3867/0.5167`. |
+
+Interpretation for the current paper draft:
+
+- On **ProofWriter**, BERT+TSRA gives the cleanest stable improvement over BERT baseline, especially at depth-5.
+- On **RuleTaker**, BERT/RoBERTa TSRA is roughly tied to or slightly above the corresponding baseline; this should be reported as a stable result rather than overstated.
+- On **PrOntoQA-OOD**, label accuracy is degenerate in the generated split, but TSRA substantially improves trace@1 for BERT/RoBERTa. Treat this as internal reasoning/trace evidence, not label-accuracy evidence.
+- On **CLUTRR**, EdgeTransformer remains the strongest structured graph-edge baseline; TSRA comparisons must clearly separate raw-text/same-backbone settings from structured graph-edge reference baselines.
+
+### Completed External Baselines
+
+| Method | Dataset | Status | Result |
+|---|---|---|---|
+| EdgeTransformer | CLUTRR `data_089907f8` | completed | overall `0.809951`; short-hop `0.976191`; long-hop 6-10 `0.684677`. |
+| RAT | CLUTRR `data_089907f8` | completed | overall `0.575493`; short-hop `0.976191`; long-hop 6-10 `0.348255`. |
+| FaiRR end-to-end | ProofWriter | completed | answer acc `98.403099`; proof acc `97.174721`. |
+| GFaiR selector2 official XLNet | RuleTaker | completed | top1 `0.984560`; top2 `0.997896`; invalid ratio `0.000597`. |
+| GFaiR full official pipeline | RuleTaker | completed | proof_acc_total `0.908629`; faithful_total `0.992208`. |
+| IBR | RuleTaker depth-5 | completed | QA `0.994153`; proof `0.937416`; full `0.937169`. |
+| NLProofS | RuleTaker depth-3ext | running | formal test restarted after shutdown; final test file pending. |
+| Abstractor/RCA adapted | CLUTRR | completed diagnostic | 3-epoch unfrozen raw-text adapter: overall `0.1571`; short `0.4336`; long `0.1095`. |
+| Dual Attention adapted | CLUTRR | completed diagnostic | 3-epoch unfrozen raw-text adapter: overall `0.2548`; short `0.9580`; long `0.1424`. |
+
+### Report File Policy
+
+- **Final report file:** `/root/TSRA/EXPERIMENT_REPORT.md`.
+- **Setup notes file:** `/root/TSRA/README_EXPERIMENTS.md`.
+- Do not use old local copies such as `EXPERIMENT_REPORT.remote.md` or `TSRA_FINAL_EXPERIMENT_REPORT.md`; those were local intermediate artifacts and are not present in the cleaned remote repo.
+
+## 0.2 Removed Mid-Run Notes
+
+The previous 2026-05-21 mid-run notes have been removed from the current report body because they described jobs that were still running at that time. The latest status in Section 0 supersedes those intermediate observations.
+
+## 0.3 Cross-Dataset Applicability of External Baselines
 
 The external baselines are not uniformly plug-and-play across all four TSRA datasets. Their official code is strongly tied to the input representation and supervision format of their target benchmarks.
 
@@ -42,16 +93,16 @@ The external baselines are not uniformly plug-and-play across all four TSRA data
 | EdgeTransformer | CLUTRR, CFQ, COGS | yes, completed | no direct support | no direct support | no direct support | Keep as CLUTRR structured graph-edge reference. Do not force onto proof datasets unless we create an oracle graph setting. |
 | RAT | CLUTRR relation-aware baseline | yes, completed | no direct support | no direct support | no direct support | Keep as CLUTRR relation-aware Transformer baseline. |
 | FaiRR | ProofWriter | possible only with graph/proof conversion | yes, completed | not official in current repo | not direct | Keep as ProofWriter full end-to-end baseline; possible future work is a RuleTaker adapter, but it would be local engineering rather than official reproduction. |
-| GFaiR | RuleTaker variants, Hard RuleTaker, RuleTaker-E, NL satisfiability | no | not official | yes, running full pipeline | not direct | Keep as RuleTaker-family baseline; additionally run depth-5 / hard RuleTaker once current full run finishes. |
-| NLProofS | EntailmentBank, ProofWriter/RuleTaker-style proof generation | no | possible | yes, running | not direct | Keep as an additional proof-generation baseline for RuleTaker; use reported/reference results if full training is too slow. |
-| IBR | RuleTaker depth-5 / ParaRules-style iterative reasoning | no | not direct | yes, running | not direct | Keep as an additional RuleTaker proof-reasoning baseline if the current run produces a valid test result. |
+| GFaiR | RuleTaker variants, Hard RuleTaker, RuleTaker-E, NL satisfiability | no | not official | yes, completed | not direct | Keep as RuleTaker-family baseline; selector2 and full official pipeline results are available. |
+| NLProofS | EntailmentBank, ProofWriter/RuleTaker-style proof generation | no | possible | yes, formal test running | not direct | Keep as an additional proof-generation baseline for RuleTaker; final test file is pending after a shutdown restart. |
+| IBR | RuleTaker depth-5 / ParaRules-style iterative reasoning | no | not direct | yes, completed | not direct | Keep as an additional RuleTaker proof-reasoning baseline; depth-5 test result is available. |
 | Abstractor/RCA | synthetic relational reasoning tasks | local raw-text adapter only | local raw-text adapter only | local raw-text adapter only | local raw-text adapter only | Use only as diagnostic if needed; not a clean official baseline for the four datasets. |
 | DAT | relational/dual-attention architecture | local raw-text adapter only | local raw-text adapter only | local raw-text adapter only | local raw-text adapter only | Same as Abstractor/RCA: useful diagnostic, weak as paper-level external baseline unless adapter is carefully validated. |
 
 Current judgment:
 
-- We already have one strong external method per main dataset family: EdgeTransformer for CLUTRR, FaiRR for ProofWriter, GFaiR for RuleTaker.
-- These external methods generally perform well on their intended datasets: EdgeTransformer has strong CLUTRR long-hop accuracy; FaiRR has very high ProofWriter answer/proof accuracy; GFaiR selector2 is very strong and full GFaiR is still running.
+- We already have one strong external method per main dataset family: EdgeTransformer for CLUTRR, FaiRR for ProofWriter, GFaiR/IBR for RuleTaker.
+- These external methods generally perform well on their intended datasets: EdgeTransformer has strong CLUTRR long-hop accuracy; FaiRR has very high ProofWriter answer/proof accuracy; GFaiR selector2 and full GFaiR are complete.
 - The missing external-method gap is PrOntoQA-OOD. The right comparison there should be PrOntoQA-specific reported baselines or a PrOntoQA-compatible LLM/neuro-symbolic reference, not EdgeTransformer/FaiRR/GFaiR forced through an unnatural adapter.
 
 ## 2. Dataset Status
@@ -132,17 +183,17 @@ Interpretation:
 - **Clone path:** `/root/TSRA/external_baselines/EdgeTransformer`.
 - **Dataset:** CLUTRR `data_089907f8`.
 - **Status:** reproduced on the corrected split.
-- **Output log:** `/root/TSRA/outputs/external_baselines/edge_transformer/data_089907f8_50ep.log`.
+- **Output path:** `/vepfs/tsra_outputs/official_external/latest_edge_rat_clutrr_089907f8`.
 
 | Model | Overall | Short-hop | Long-hop >=6 | Notes |
 |---|---:|---:|---:|---|
-| Edge Transformer | 0.7618 | 0.9650 | 0.6197 | structured graph-edge input |
+| Edge Transformer | 0.8100 | 0.9762 | 0.6847 | structured graph-edge input |
 
 Per-hop accuracy:
 
 | Hop | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Accuracy | 1.0000 | 0.9524 | 0.9842 | 0.8736 | 0.7290 | 0.7153 | 0.5733 | 0.6387 | 0.4454 |
+| Accuracy | 1.0000 | 0.9524 | 1.0000 | 0.9138 | 0.8318 | 0.7986 | 0.6333 | 0.5882 | 0.5714 |
 
 Interpretation:
 
@@ -238,19 +289,22 @@ Interpretation:
 - **Paper link:** `https://aclanthology.org/2024.lrec-main.1436.pdf`.
 - **Clone path:** `/root/TSRA/external_baselines/GFaiR`.
 - **Dataset chosen:** RuleTaker, because GFaiR is built around RuleTaker-3ext-sat, depth-5, and hard RuleTaker.
-- **Full official blocker:** the repo expects local `../../model/xlnet` and `../../model/T5` checkpoints, which are not currently available on the dev machine.
-- **Runnable setting:** official GFaiR RuleTaker data and post-selector objective, with local DeBERTa encoder adaptation.
-- **Output:** `/root/TSRA/outputs/external_baselines/gfair_deberta_selector2_1k_unfrozen.json`.
+- **Official checkpoint issue:** the repo hard-coded local `../../model/xlnet` and `../../model/T5` paths. This was patched to use `/vepfs/tsra_models/hf/xlnet-large-cased` and `/vepfs/tsra_models/hf/t5-large`.
+- **Current status:** selector2 and full official RuleTaker inference completed.
+- **Selector2 output:** `/vepfs/tsra_outputs/official_external/latest_gfair_selector2_test_retry/test_result_recording.txt`.
+- **Full inference output:** `/vepfs/tsra_outputs/official_external/gfair_full_20260521_085403/full_inference_ruletaker_3ext_retry_after_reboot_bs8/test_result_recording.txt`.
 
 | Model | Train | Eval | Result | Notes |
 |---|---:|---:|---|---|
+| GFaiR selector2 official XLNet | official | test | top1 `0.984560`; top2 `0.997896`; invalid `0.000597` | official component |
+| GFaiR full official pipeline | official | RuleTaker test | proof_acc_total `0.908629`; faithful_total `0.992208` | official pipeline |
 | GFaiR Selector2 adapted DeBERTa | 1000 | dev/test 500 | dev top1_acc 0.914; test top1_acc 0.886 | component-level post-selector result |
 
 Interpretation:
 
-- This is a meaningful runnable GFaiR component result.
-- It should be labeled as **GFaiR post-selector adapted DeBERTa**, not full official GFaiR pipeline.
-- It provides a strong RuleTaker comparison point for proof-step or selector-style reasoning.
+- The official GFaiR results are now available and should be preferred over the older adapted-DeBERTa smoke/component result.
+- The adapted DeBERTa selector result is useful only as a local sanity check.
+- GFaiR remains a strong RuleTaker proof-reasoning reference baseline, but it is not a same-backbone comparison against TSRA.
 
 ### FaiRR on ProofWriter
 
@@ -259,17 +313,18 @@ Interpretation:
 - **Paper link:** `https://aclanthology.org/2022.acl-long.77/`.
 - **Clone path:** `/root/TSRA/external_baselines/FaiRR`.
 - **Dataset chosen:** ProofWriter, because FaiRR decomposes natural-language reasoning into rule selection, fact selection, and reasoning.
-- **Current status:** component-level runs completed using official processed data format and local DeBERTa adaptation.
+- **Current status:** official end-to-end ProofWriter run completed; older component-level runs are retained as diagnostics.
 
 | Component | Train | Eval | Result | Output |
 |---|---:|---:|---|---|
+| FaiRR end-to-end | official | test | answer acc `98.403099`; proof acc `97.174721` | `/vepfs/tsra_outputs/official_external/latest_fairr_e2e_retry` |
 | FaiRR fact-selector adapted DeBERTa | 2000 | 1000 | dev top1_acc 0.981; test top1_acc 0.988; test token_acc 0.9956 | `outputs/external_baselines/fairr_fact_deberta_2k.json` |
 
 Interpretation:
 
-- This is a meaningful ProofWriter external method comparison at the component level.
-- It should be labeled as **FaiRR selector adapted DeBERTa**, not full end-to-end FaiRR, until rule selector, fact selector, and reasoner are connected.
-- The official rule-selector path was also verified, but the fact-selector result above is the cleaner component result for the final summary.
+- The official end-to-end result should be used as the paper-level FaiRR comparison.
+- The adapted fact-selector result is only a component diagnostic.
+- The official rule-selector path was also verified; however, the final summary should cite the end-to-end result rather than the older component diagnostic.
 
 ### PrOntoQA-OOD Official Reference
 
@@ -335,7 +390,8 @@ Interpretation:
 | Model | Input setting | Overall | Short-hop | Long-hop >=6 | Paper-use status |
 |---|---|---:|---:|---:|---|
 | TSRA-DeBERTa | raw text + train-time trace | 0.6370 | 0.8052 | 0.4332 | main TSRA evidence |
-| Edge Transformer | structured graph edges | 0.7618 | 0.9650 | 0.6197 | structured/reference baseline |
+| Edge Transformer | structured graph edges | 0.8100 | 0.9762 | 0.6847 | structured/reference baseline |
+| RAT | structured relation-aware baseline | 0.5755 | 0.9762 | 0.3483 | structured/reference baseline |
 | Dual Attention adapted | raw text, DeBERTa unfrozen | 0.2548 | 0.9580 | 0.1424 | external adapted diagnostic |
 | Abstractor/RCA adapted | raw text, DeBERTa unfrozen | 0.1571 | 0.4336 | 0.1095 | external adapted diagnostic |
 | MAC-style attention adapted | raw text, local MAC-style model | 0.2173 | 0.6573 | 0.1283 | attention baseline diagnostic |
@@ -405,44 +461,48 @@ Important wording for the paper:
 ### Ready for Main Paper Tables
 
 - CLUTRR TSRA-DeBERTa existing result.
-- CLUTRR Edge Transformer reproduced reference result, clearly labeled as structured graph-edge input.
+- CLUTRR Edge Transformer and RAT reproduced reference results, clearly labeled as structured graph-edge input.
 - CLUTRR DAT adapted DeBERTa-unfrozen diagnostic result.
 - CLUTRR MAC-style attention diagnostic result.
-- RuleTaker GFaiR Selector2 adapted DeBERTa component result.
-- ProofWriter FaiRR selector adapted DeBERTa component result.
+- ProofWriter BERT/RoBERTa same-backbone baseline vs TSRA seed results.
+- ProofWriter FaiRR official end-to-end result.
+- RuleTaker BERT/RoBERTa same-backbone baseline vs TSRA seed results.
+- RuleTaker GFaiR selector2 official XLNet and full official pipeline results.
+- RuleTaker IBR depth-5 result.
+- PrOntoQA-OOD BERT/RoBERTa trace@1 comparison, with the explicit caveat that label accuracy is degenerate.
 
 ### Preliminary / Appendix / Diagnostic Only
 
-- ProofWriter/RuleTaker DeBERTa TSRA-Prop small-limit runs.
-- PrOntoQA current TSRA-Prop results, because the current binary label setup is degenerate.
+- Earlier ProofWriter/RuleTaker/PrOntoQA TSRA-Prop small-limit runs.
 - Abstractor/RCA CLUTRR adapted result, unless more training/adapter refinement is done.
+- DAT and MAC-style CLUTRR raw-text adapted results: useful diagnostics, not official reproductions of the original papers' preferred settings.
 
 ### Not Yet Paper-Quality
 
-- Full FaiRR end-to-end proof inference.
-- Full GFaiR official XLNet/T5 pipeline.
-- Full TSRA-Prop on ProofWriter/RuleTaker/PrOntoQA with larger training, stronger encoder, and cleaner depth metrics.
-- Multi-seed aggregation.
+- NLProofS formal test result, because the current retry is still running after a shutdown interruption.
+- PrOntoQA label-accuracy claims, unless we switch to proof/trace correctness or a non-degenerate official evaluation.
 
 ## 9. Next Steps
 
 Priority for the next 2-3 days:
 
-1. Build final CLUTRR table with TSRA, same-backbone Transformer classifier from the draft, Edge Transformer, DAT adapted, MAC-style attention, and Abstractor/RCA if desired.
-2. Re-run or extract exact same-backbone Transformer baseline numbers from the existing draft/logs so CLUTRR raw-text comparisons are clean.
-3. Extend ProofWriter and RuleTaker TSRA-Prop from small diagnostic runs to fuller DeBERTa/RoBERTa runs with depth-grouped evaluation.
-4. Decide whether GFaiR/FaiRR component results are enough for the paper narrative or whether full pipelines must be completed.
-5. Redesign PrOntoQA-OOD evaluation around proof correctness or step correctness rather than degenerate binary classification.
-6. Add multi-seed aggregation for final reported tables.
+1. Wait for the restarted NLProofS formal test to finish, then add its final test file and status.
+2. Build final aggregation tables from BERT/RoBERTa/DeBERTa seed outputs: mean, standard deviation, and depth/hop grouped metrics.
+3. Build final CLUTRR table with TSRA, same-backbone Transformer classifier from the draft/logs, Edge Transformer, RAT, DAT adapted, MAC-style attention, and Abstractor/RCA if desired.
+4. Redesign PrOntoQA-OOD reporting around trace/proof-step correctness rather than degenerate binary classification.
+5. Move old diagnostic/adapted external baselines to appendix language and keep official EdgeTransformer/FaiRR/GFaiR/IBR as main external comparisons.
+6. Once tables are frozen, update the paper draft's experiment section directly from this report.
 
 ## 10. Chinese Summary for Meeting / Draft Writing
 
 本轮实验已经把四个数据集都准备到了可实验状态：CLUTRR 和 RuleTaker 使用仓库已有数据，ProofWriter 已从官方 S3 下载并传到开发机，PrOntoQA-OOD 官方数据和官方 FLAN-T5 输出也已整理完成。CLUTRR 统一使用我们一直采用的 `data_089907f8` split。
 
-目前最有力的结论来自 CLUTRR。TSRA-DeBERTa 在 raw-text 输入、训练时使用 trace supervision、测试时不使用 gold trace 的设置下，达到 overall 0.6370、short-hop 0.8052、long-hop 0.4332。相比之下，DAT 和 MAC-style attention 在浅层 hop 上可以学得很好，例如 DAT short-hop 达到 0.9580，说明模型并不是训练失败；但它的 long-hop 只有 0.1424，MAC-style attention long-hop 也只有 0.1283。这说明普通 attention/relational inductive bias 更容易学到浅层模式或局部关系组合，而不一定真正学会可系统泛化的多步推理。
+目前最有力的结论来自 CLUTRR 和 ProofWriter/RuleTaker 的多 backbone 结果。CLUTRR 中，TSRA-DeBERTa 在 raw-text 输入、训练时使用 trace supervision、测试时不使用 gold trace 的设置下，达到 overall 0.6370、short-hop 0.8052、long-hop 0.4332。相比之下，DAT 和 MAC-style attention 在浅层 hop 上可以学得很好，例如 DAT short-hop 达到 0.9580，说明模型并不是训练失败；但它的 long-hop 只有 0.1424，MAC-style attention long-hop 也只有 0.1283。这说明普通 attention/relational inductive bias 更容易学到浅层模式或局部关系组合，而不一定真正学会可系统泛化的多步推理。
 
-Edge Transformer 在 CLUTRR 上效果很好，overall 0.7618、long-hop 0.6197，但它使用结构化 graph-edge input，因此应该作为 structured/reference baseline，而不是和 TSRA raw-text setting 直接公平比较。
+Edge Transformer 在 CLUTRR 上效果很好，overall 0.8100、long-hop 0.6847，但它使用结构化 graph-edge input，因此应该作为 structured/reference baseline，而不是和 TSRA raw-text setting 直接公平比较。
 
-ProofWriter 和 RuleTaker 方面，已经跑通 FaiRR 和 GFaiR 的关键组件级 baseline。FaiRR fact-selector adapted DeBERTa 在 ProofWriter 上 test top1_acc 达到 0.988；GFaiR Selector2 adapted DeBERTa 在 RuleTaker 上 test top1_acc 达到 0.886。这些结果可以说明我们已经开始和相关 proof-reasoning 方法对比，但需要在论文中明确它们是 component-level adapted baselines，不是完整官方 pipeline。
+ProofWriter 和 RuleTaker 方面，BERT/RoBERTa 的 10epoch seed 实验已经完成。BERT 在 ProofWriter depth-5 上从 baseline 的 0.8899/0.8728 提升到 TSRA 的 0.8952/0.8873；RoBERTa 的 TSRA 结果也明显比不稳定的 baseline seed 更稳。RuleTaker 上 BERT/RoBERTa 的 TSRA 与 baseline 基本持平到小幅提升，应作为稳定但不夸大的结果呈现。
+
+外部 baseline 方面，FaiRR end-to-end 在 ProofWriter 上达到 answer acc 98.403、proof acc 97.175；GFaiR selector2 official XLNet 在 RuleTaker 上 top1 0.9846，完整 GFaiR pipeline 的 proof_acc_total 为 0.9086、faithful_total 为 0.9922；IBR depth-5 也已经跑出 full 0.9372。NLProofS formal test 因开发机关机被中断，目前已经从 checkpoint 重启，最终 test 文件仍在等待。
 
 整体上，当前结果支持 TSRA 的核心叙事：普通 Transformer 或通用 attention/relational reasoning 方法可以拟合浅层训练分布，但在 shallow-train/deep-test 的 long-hop systematic generalization 上明显不足；TSRA 通过训练阶段的 trace supervision 更直接地约束内部 reasoning-step selection，因此更适合 query-conditioned multi-step textual reasoning。
