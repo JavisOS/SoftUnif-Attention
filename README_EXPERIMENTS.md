@@ -153,6 +153,9 @@ script runs what, and where are the artifacts?" without duplicating every table.
 - `scripts/run_*`: thin launchers for formal TSRA and external-baseline runs.
 - `scripts/run_additional_depth_seed_checks.sh`: CLUTRR `data_db9b8f04`,
   strict RuleTaker raw-QDep, and DeBERTa seed-42 follow-up queue.
+- `scripts/run_seed42_completion_after_additional.sh`: waits for the current
+  follow-up queue, then fills missing seed-42 runs so main tables can aggregate
+  seeds `0/1/42`.
 - `external_baselines/README.md`: index of local third-party workspaces.
 
 ## Artifact Policy

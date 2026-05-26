@@ -14,6 +14,9 @@ Primary entry points:
 - `run_additional_depth_seed_checks.sh`: follow-up depth/seed queue covering
   CLUTRR `data_db9b8f04` 2/3/4-hop train and strict RuleTaker raw QDep 1/2
   train with seeds `0/1/42`.
+- `run_seed42_completion_after_additional.sh`: waits for the additional
+  depth/seed queue, then fills missing seed-42 runs for the main formal
+  CLUTRR/ProofWriter/RuleTaker/PrOntoQA tables.
 - `run_edge_rat_clutrr_089907f8.sh`: EdgeTransformer/RAT CLUTRR baseline on
   the required `data_089907f8` split.
 - `run_gfair_full_preprocess_train.sh`: GFaiR full RuleTaker pipeline.

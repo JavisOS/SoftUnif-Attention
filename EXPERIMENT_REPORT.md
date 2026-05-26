@@ -35,10 +35,12 @@ Updated on **2026-05-26 08:12 UTC**. This is the current authoritative status fo
 - **Additional depth/seed checks are running on GPUs 5-7.** This follow-up queue adds:
   CLUTRR `data_db9b8f04` 2/3/4-hop train, strict RuleTaker raw-data QDep 1/2 train -> QDep 1-5 test, and ProofWriter DeBERTa seed-42 baseline/TSRA checks.
   Current symlink: `/vepfs/tsra_outputs/additional_depth_checks/latest_depth_seed_checks`.
+- **Three-seed policy update:** the formal report should ultimately aggregate seeds `0/1/42`. Most earlier formal tables were only seed `0/1`; a queued follow-up script,
+  `scripts/run_seed42_completion_after_additional.sh`, waits for the current depth/seed queue and then fills the missing seed-42 runs for the main CLUTRR, ProofWriter, RuleTaker, and PrOntoQA tables.
 
 ### Completed Main TSRA/Backbone Runs
 
-All planned TSRA/backbone runs for **CLUTRR, ProofWriter, RuleTaker, and PrOntoQA-OOD** are complete except for the optional NLProofS external baseline test result. Formal 10-epoch BERT and RoBERTa seed queues are complete; DeBERTa formal main and seed-1 reruns are complete. A follow-up depth/seed queue is now running to cover the CLUTRR 2/3/4-hop train split and a stricter RuleTaker raw-depth setting.
+The earlier formal TSRA/backbone runs for **CLUTRR, ProofWriter, RuleTaker, and PrOntoQA-OOD** mostly cover seeds `0/1`. A third-seed completion queue is now scheduled so final paper tables can report mean/std over seeds `0/1/42`. NLProofS remains the only optional external baseline test still running.
 
 | Dataset | Backbone | Model | Seeds | Main Result |
 |---|---|---|---:|---|
