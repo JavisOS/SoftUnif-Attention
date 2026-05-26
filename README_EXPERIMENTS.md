@@ -14,6 +14,8 @@ script runs what, and where are the artifacts?" without duplicating every table.
 - Train: `1.2,1.3_train.csv`.
 - Test: `1.2_test.csv` through `1.10_test.csv`.
 - Policy: shallow train on hop 2/3; deep test emphasizes held-out hops >=6.
+- Follow-up split: `/root/TSRA/data/data_db9b8f04`, with
+  `1.2,1.3,1.4_train.csv` for 2/3/4-hop training.
 - TSRA config: `/root/TSRA/configs/clutrr/train_tsra.yaml`.
 - EdgeTransformer copy: `/root/TSRA/external_baselines/EdgeTransformer/clutrr/data/data_089907f8`.
 - Main outputs: `/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep` and
@@ -25,6 +27,10 @@ script runs what, and where are the artifacts?" without duplicating every table.
 - Native path: `/root/TSRA/data/rule-reasoning-dataset-V2020.2.5.0/original`.
 - Current TSRA split: shallow train on low proof depth; eval includes depth-3ext
   and depth-5 style settings where available.
+- Strict raw-depth follow-up: `scripts/transformer_tsra_prop.py --dataset
+  ruletaker_raw` can filter by question-level QDep via `--train-qdeps` and
+  `--test-qdeps`. The current follow-up queue trains QDep 1/2 and tests QDep
+  1-5.
 - GFaiR data path: `/root/TSRA/external_baselines/GFaiR/data/ruletaker_3ext_sat`.
 - Main TSRA outputs:
   `/vepfs/tsra_outputs/formal_10ep/latest_prop_bert_backbone_seeds/results`,
@@ -145,6 +151,8 @@ script runs what, and where are the artifacts?" without duplicating every table.
 - `scripts/transformer_tsra_prop.py`: shared TSRA proposition/proof-step runner
   for ProofWriter, RuleTaker, and PrOntoQA.
 - `scripts/run_*`: thin launchers for formal TSRA and external-baseline runs.
+- `scripts/run_additional_depth_seed_checks.sh`: CLUTRR `data_db9b8f04`,
+  strict RuleTaker raw-QDep, and DeBERTa seed-42 follow-up queue.
 - `external_baselines/README.md`: index of local third-party workspaces.
 
 ## Artifact Policy

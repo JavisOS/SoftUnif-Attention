@@ -22,7 +22,7 @@ Evaluation emphasizes shallow-train / deep-test settings:
 
 ## 0. Latest Status Snapshot
 
-Updated on **2026-05-25 12:35 UTC**. This is the current authoritative status for the experiment report. Older "live update" notes below are retained only as execution history and should not be cited over this section.
+Updated on **2026-05-26 08:12 UTC**. This is the current authoritative status for the experiment report. Older "live update" notes below are retained only as execution history and should not be cited over this section.
 
 ### Running Jobs
 
@@ -30,12 +30,15 @@ Updated on **2026-05-25 12:35 UTC**. This is the current authoritative status fo
   `/vepfs/tsra_outputs/official_external/latest_nlproofs_ruletaker/prover/lightning_logs/version_0/checkpoints/epoch=19-step=16940.ckpt`.
 - Current retry path:
   `/vepfs/tsra_outputs/official_external/latest_nlproofs_ruletaker_test`.
-- Current progress at the latest check: about `1355/17580` test batches (`~8%`) after restart. No final `results_test*.json` exists yet.
-- GPU keepalive is active on GPU1-4 using `gpu_run.py`; NLProofS is on GPU0. GPUs 5-7 are intentionally idle.
+- Current progress at the latest check: about `7987/17580` test batches (`~45%`) after restart. No final `results_test*.json` exists yet.
+- GPU keepalive is active on GPU1-4 using `gpu_run.py`; NLProofS is on GPU0.
+- **Additional depth/seed checks are running on GPUs 5-7.** This follow-up queue adds:
+  CLUTRR `data_db9b8f04` 2/3/4-hop train, strict RuleTaker raw-data QDep 1/2 train -> QDep 1-5 test, and ProofWriter DeBERTa seed-42 baseline/TSRA checks.
+  Current symlink: `/vepfs/tsra_outputs/additional_depth_checks/latest_depth_seed_checks`.
 
 ### Completed Main TSRA/Backbone Runs
 
-All planned TSRA/backbone runs for **CLUTRR, ProofWriter, RuleTaker, and PrOntoQA-OOD** are complete except for the optional NLProofS external baseline test result. Formal 10-epoch BERT and RoBERTa seed queues are complete; DeBERTa formal main and seed-1 reruns are complete.
+All planned TSRA/backbone runs for **CLUTRR, ProofWriter, RuleTaker, and PrOntoQA-OOD** are complete except for the optional NLProofS external baseline test result. Formal 10-epoch BERT and RoBERTa seed queues are complete; DeBERTa formal main and seed-1 reruns are complete. A follow-up depth/seed queue is now running to cover the CLUTRR 2/3/4-hop train split and a stricter RuleTaker raw-depth setting.
 
 | Dataset | Backbone | Model | Seeds | Main Result |
 |---|---|---|---:|---|
@@ -44,7 +47,7 @@ All planned TSRA/backbone runs for **CLUTRR, ProofWriter, RuleTaker, and PrOntoQ
 | ProofWriter | BERT | TSRA | 0,1 | depth-3 `0.9635/0.9591`; depth-5 `0.8952/0.8873`. |
 | ProofWriter | RoBERTa | baseline | 0,1 | depth-3 `0.9406/0.7288`; depth-5 `0.8507/0.7160`. |
 | ProofWriter | RoBERTa | TSRA | 0,1 | depth-3 `0.9322/0.9565`; depth-5 `0.8386/0.8698`. |
-| ProofWriter | DeBERTa | baseline | 0 | depth-3 `0.9473`; depth-5 `0.8855`. |
+| ProofWriter | DeBERTa | baseline | 0,1 | depth-3 `0.9473/0.9228`; depth-5 `0.8855/0.8422`. |
 | ProofWriter | DeBERTa | TSRA | 0,1 | depth-3 `0.9479/0.9454`; depth-5 `0.8550/0.8495`; trace@1 strongly improves. |
 | RuleTaker | BERT | baseline | 0,1 | test accuracy `0.9608/0.9638`. |
 | RuleTaker | BERT | TSRA | 0,1 | test accuracy `0.9637/0.9630`. |
@@ -161,6 +164,7 @@ Current judgment:
 - **Required split:** `data/data_089907f8`.
 - **Train split:** `1.2,1.3_train.csv`, containing 2-hop and 3-hop examples.
 - **Test split:** `1.2_test.csv` through `1.10_test.csv`.
+- **Follow-up split:** `data/data_db9b8f04`, with `1.2,1.3,1.4_train.csv` for 2/3/4-hop training. A DeBERTa TSRA-vs-label-only seed `0/1/42` queue is running under `/vepfs/tsra_outputs/additional_depth_checks/latest_depth_seed_checks`.
 - **Depth/hop definition:** length of the query-subject to query-object entity path.
 - **Trace definition:** entity/relation path from query subject to query object.
 - **Evaluation:** overall accuracy, short-hop accuracy, long-hop accuracy, per-hop accuracy.
@@ -187,6 +191,7 @@ Current judgment:
 - **Available settings:** depth-0, depth-1, depth-2, depth-3, depth-3ext, depth-5, hard RuleTaker variants.
 - **Trace definition:** fact/rule/proposition proof-step sequence from provided proof metadata.
 - **Current split used:** GFaiR RuleTaker-3ext-sat train/dev/test with `*_withmidprove.pkl`.
+- **Strict raw-depth follow-up:** a new `ruletaker_raw` loader filters by question-level `QDep`, not only by directory-level `depth-*`. The running check trains on QDep `1,2` from raw `depth-1/depth-2` train files and evaluates QDep `1,2,3,4,5` from raw depth `1,2,3,5` dev/test files.
 - **Current status:** ready; TSRA-Prop and GFaiR component experiments have been run.
 
 ### PrOntoQA-OOD
@@ -412,6 +417,7 @@ Early small-limit TSRA-Prop runs have been superseded by formal 10-epoch runs. T
 | RoBERTa | TSRA | 0 | 0.9322 | 0.8386 | 0.8487 | 0.7966 | formal 10ep |
 | RoBERTa | TSRA | 1 | 0.9565 | 0.8698 | 0.8423 | 0.7928 | formal 10ep |
 | DeBERTa | baseline | 0 | 0.9473 | 0.8855 | 0.3145 | 0.1937 | formal 10ep |
+| DeBERTa | baseline | 1 | 0.9228 | 0.8422 | 0.2342 | 0.1642 | seed-1 rerun existed; previously omitted from top summary |
 | DeBERTa | TSRA | 0 | 0.9479 | 0.8550 | 0.7875 | 0.7433 | formal 10ep |
 | DeBERTa | TSRA | 1 | 0.9454 | 0.8495 | 0.8365 | 0.7854 | seed-1 rerun |
 
@@ -482,7 +488,7 @@ Key CLUTRR takeaway:
 | BERT+TSRA | 0/1/2 | depth-5 | acc `0.8952/0.8873`; trace@1 `0.7834/0.7848` | strongest same-backbone TSRA signal |
 | RoBERTa baseline | 0/1/2 | depth-5 | acc `0.8507/0.7160` | unstable seed1 |
 | RoBERTa+TSRA | 0/1/2 | depth-5 | acc `0.8386/0.8698`; trace@1 `0.7966/0.7928` | stabilizes trace selection |
-| DeBERTa baseline | 0/1/2 | depth-5 | acc `0.8855`; trace@1 `0.1937` | seed0 baseline |
+| DeBERTa baseline | 0/1/2 | depth-5 | acc `0.8855/0.8422`; trace@1 `0.1937/0.1642` | seed0/1 baseline |
 | DeBERTa+TSRA | 0/1/2 | depth-5 | acc `0.8550/0.8495`; trace@1 `0.7433/0.7854` | trace improves, label acc lower |
 | FaiRR end-to-end | official | test | answer acc `98.403`; proof acc `97.175` | official external baseline |
 
