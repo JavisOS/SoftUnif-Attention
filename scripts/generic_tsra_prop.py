@@ -29,47 +29,62 @@ def _proof_ids(question):
     return set(_ID_RE.findall(proofs))
 
 
-def load_proofwriter(root: Path, depths, split: str, limit=None):
+def _load_meta_depth_dirs(depth_dirs, split: str, limit=None, qdep_filter=None):
+    qdep_filter = set(qdep_filter) if qdep_filter is not None else None
     samples = []
-    depth_dirs = []
-    for d in depths:
-        candidates = [root / "OWA" / f"depth-{d}", root / "OWA" / f"depth-{d}ext-NatLang"]
-        depth_dirs.extend([p for p in candidates if p.exists()])
     for depth_dir in depth_dirs:
         path = depth_dir / f"meta-{split}.jsonl"
         if not path.exists():
             continue
-        with path.open(encoding="utf-8") as f:
-            for line in f:
-                if not line.strip():
+        for line in path.open(encoding="utf-8"):
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            facts = item.get("triples", {})
+            rules = item.get("rules", {})
+            sent_items = []
+            for key, val in sorted(facts.items(), key=lambda kv: int(re.sub(r"\D", "", kv[0]) or 0)):
+                sent_items.append((key, val.get("text", "")))
+            for key, val in sorted(rules.items(), key=lambda kv: int(re.sub(r"\D", "", kv[0]) or 0)):
+                sent_items.append((key, val.get("text", "")))
+            sentences = [s for _, s in sent_items if s]
+            context = " ".join(sentences) or item.get("theory", "")
+            for qid, q in item.get("questions", {}).items():
+                depth = int(q.get("QDep", item.get("maxD", -1)))
+                if qdep_filter is not None and depth not in qdep_filter:
                     continue
-                item = json.loads(line)
-                facts = item.get("triples", {})
-                rules = item.get("rules", {})
-                sent_items = []
-                for key, val in sorted(facts.items(), key=lambda kv: int(re.sub(r"\D", "", kv[0]) or 0)):
-                    sent_items.append((key, val.get("text", "")))
-                for key, val in sorted(rules.items(), key=lambda kv: int(re.sub(r"\D", "", kv[0]) or 0)):
-                    sent_items.append((key, val.get("text", "")))
-                sentences = [s for _, s in sent_items if s]
-                context = " ".join(sentences) or item.get("theory", "")
-                for qid, q in item.get("questions", {}).items():
-                    ids = _proof_ids(q)
-                    trace = [1 if key in ids else 0 for key, _ in sent_items]
-                    samples.append(
-                        {
-                            "id": f"{item.get('id', '')}_{qid}",
-                            "context": context,
-                            "query": q.get("question", ""),
-                            "sentences": sentences or _split_sentences(context),
-                            "trace_labels": trace,
-                            "label": _label(q.get("answer")),
-                            "depth": int(q.get("QDep", item.get("maxD", -1))),
-                        }
-                    )
-                    if limit is not None and len(samples) >= limit:
-                        return samples
+                ids = _proof_ids(q)
+                trace = [1 if key in ids else 0 for key, _ in sent_items]
+                samples.append(
+                    {
+                        "id": f"{item.get('id', '')}_{qid}",
+                        "context": context,
+                        "query": q.get("question", ""),
+                        "sentences": sentences or _split_sentences(context),
+                        "trace_labels": trace,
+                        "label": _label(q.get("answer")),
+                        "depth": depth,
+                    }
+                )
+                if limit is not None and len(samples) >= limit:
+                    return samples
     return samples
+
+
+def load_proofwriter(root: Path, depths, split: str, limit=None):
+    depth_dirs = []
+    for d in depths:
+        candidates = [root / "OWA" / f"depth-{d}", root / "OWA" / f"depth-{d}ext-NatLang"]
+        depth_dirs.extend([p for p in candidates if p.exists()])
+    return _load_meta_depth_dirs(depth_dirs, split, limit)
+
+
+def load_ruletaker_raw(root: Path, depth_dirs, split: str, limit=None, qdeps=None):
+    dirs = []
+    for d in depth_dirs:
+        candidates = [root / f"depth-{d}", root / f"depth-{d}ext", root / f"depth-{d}ext-NatLang"]
+        dirs.extend([p for p in candidates if p.exists()])
+    return _load_meta_depth_dirs(dirs, split, limit, qdep_filter=qdeps)
 
 
 def load_ruletaker_gfair(root: Path, split: str, limit=None):

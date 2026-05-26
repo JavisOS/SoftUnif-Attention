@@ -11,6 +11,9 @@ Primary entry points:
   ProofWriter, RuleTaker, and PrOntoQA.
 - `run_prop_deberta_seed1_gpu7_retry.sh`: current seed-1 10-epoch retry queue
   for non-CLUTRR datasets.
+- `run_additional_depth_seed_checks.sh`: follow-up depth/seed queue covering
+  CLUTRR `data_db9b8f04` 2/3/4-hop train and strict RuleTaker raw QDep 1/2
+  train with seeds `0/1/42`.
 - `run_edge_rat_clutrr_089907f8.sh`: EdgeTransformer/RAT CLUTRR baseline on
   the required `data_089907f8` split.
 - `run_gfair_full_preprocess_train.sh`: GFaiR full RuleTaker pipeline.

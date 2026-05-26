@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModel, AutoTokenizer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from generic_tsra_prop import load_prontoqa, load_proofwriter, load_ruletaker_gfair
+from generic_tsra_prop import load_prontoqa, load_proofwriter, load_ruletaker_gfair, load_ruletaker_raw
 
 
 class TextTraceDataset(Dataset):
@@ -200,17 +200,37 @@ def run(train, tests, args):
         ds = TextTraceDataset(samples, tokenizer, args.max_sents, args.max_len)
         loader = DataLoader(ds, batch_size=args.batch_size, collate_fn=ds.collate)
         results[name] = evaluate(model, loader, device)
-    return {"dataset": args.dataset, "model_name": args.model_name, "lambda_trace": args.lambda_trace, "train": len(train), "results": results}
+    return {
+        "dataset": args.dataset,
+        "model_name": args.model_name,
+        "lambda_trace": args.lambda_trace,
+        "seed": args.seed,
+        "epochs": args.epochs,
+        "train_depths": args.train_depths,
+        "test_depths": args.test_depths,
+        "train_qdeps": args.train_qdeps,
+        "test_qdeps": args.test_qdeps,
+        "train": len(train),
+        "results": results,
+    }
+
+
+def _parse_ints(value):
+    if value is None or value == "":
+        return None
+    return [int(x) for x in str(value).split(",") if x != ""]
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", choices=["proofwriter", "ruletaker_gfair", "prontoqa"], required=True)
+    parser.add_argument("--dataset", choices=["proofwriter", "ruletaker_gfair", "ruletaker_raw", "prontoqa"], required=True)
     parser.add_argument("--root", required=True)
     parser.add_argument("--model-name", default="microsoft/deberta-base")
     parser.add_argument("--lambda-trace", type=float, default=1.0)
     parser.add_argument("--train-depths", default="0,1,2")
     parser.add_argument("--test-depths", default="3,5")
+    parser.add_argument("--train-qdeps", default="")
+    parser.add_argument("--test-qdeps", default="")
     parser.add_argument("--limit-train", type=int, default=1000)
     parser.add_argument("--limit-test", type=int, default=500)
     parser.add_argument("--epochs", type=int, default=3)
@@ -230,8 +250,8 @@ def main():
 
     root = Path(args.root)
     if args.dataset == "proofwriter":
-        train_depths = [int(x) for x in args.train_depths.split(",") if x]
-        test_depths = [int(x) for x in args.test_depths.split(",") if x]
+        train_depths = _parse_ints(args.train_depths) or []
+        test_depths = _parse_ints(args.test_depths) or []
         train = load_proofwriter(root, train_depths, "train", args.limit_train)
         tests = {f"depth-{d}": load_proofwriter(root, [d], "test", args.limit_test) for d in test_depths}
     elif args.dataset == "ruletaker_gfair":
@@ -239,6 +259,16 @@ def main():
         tests = {
             "dev": load_ruletaker_gfair(root, "dev", args.limit_test),
             "test": load_ruletaker_gfair(root, "test", args.limit_test),
+        }
+    elif args.dataset == "ruletaker_raw":
+        train_depths = _parse_ints(args.train_depths) or []
+        test_depths = _parse_ints(args.test_depths) or []
+        train_qdeps = _parse_ints(args.train_qdeps)
+        test_qdeps = _parse_ints(args.test_qdeps)
+        train = load_ruletaker_raw(root, train_depths, "train", args.limit_train, qdeps=train_qdeps)
+        tests = {
+            "dev": load_ruletaker_raw(root, test_depths, "dev", args.limit_test, qdeps=test_qdeps),
+            "test": load_ruletaker_raw(root, test_depths, "test", args.limit_test, qdeps=test_qdeps),
         }
     else:
         train_files = ["1hop_ProofsOnly_random_noadj.json", "2hop_ProofsOnly_random_noadj.json"]
