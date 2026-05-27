@@ -22,14 +22,14 @@ Evaluation emphasizes shallow-train / deep-test settings:
 
 ## 0. Latest Status Snapshot
 
-Updated on **2026-05-27 08:50 UTC** after the seed-42 completion queue finished. This section is the current authoritative summary. Values are `mean +/- sample-std` over seeds `0/1/42` unless stated otherwise.
+Updated on **2026-05-27 14:15 UTC** after the seed-42 completion queue and NLProofS formal test finished. This section is the current authoritative summary. Values are `mean +/- sample-std` over seeds `0/1/42` unless stated otherwise.
 
 ### Completion Status
 
 - **TSRA/backbone runs are complete:** additional depth/seed checks are `14/14 done, 0 failed`; seed-42 completion is `22/22 done, 0 failed`.
 - **Final aggregated artifacts:** `docs/aggregated_results/AGGREGATED_RESULTS_20260527.md` and `docs/aggregated_results/aggregated_results_20260527.json`.
 - **Aggregation script:** `scripts/aggregate_experiment_results.py`.
-- **Only remaining live process:** NLProofS formal RuleTaker test is still running on GPU0 and has not produced a final result file. Treat NLProofS as pending external-reference evidence, not part of the completed TSRA main table.
+- **NLProofS formal RuleTaker test is complete:** final result file is at `/vepfs/tsra_outputs/official_external/latest_nlproofs_ruletaker_test/prover_test/lightning_logs/version_0/results_test.json`. Reported test metrics: answer overall `0.6796`, proof overall `0.9187`.
 
 ### Completed TSRA Main Results
 
@@ -125,7 +125,7 @@ Interpretation: do not use PrOntoQA label accuracy as a central claim. Use it as
 | GFaiR selector2 official XLNet | RuleTaker | completed | top1 `0.984560`; top2 `0.997896`; invalid ratio `0.000597`. |
 | GFaiR full official pipeline | RuleTaker | completed | proof_acc_total `0.908629`; faithful_total `0.992208`. |
 | IBR | RuleTaker depth-5 | completed | QA `0.994153`; proof `0.937416`; full `0.937169`. |
-| NLProofS | RuleTaker depth-3ext | running | formal test restarted after shutdown; final test file pending. |
+| NLProofS | RuleTaker depth-3ext | completed | answer overall `0.6796`; proof overall `0.9187`. |
 | Abstractor/RCA adapted | CLUTRR | completed diagnostic | 3-epoch unfrozen raw-text adapter: overall `0.1571`; short `0.4336`; long `0.1095`. |
 | Dual Attention adapted | CLUTRR | completed diagnostic | 3-epoch unfrozen raw-text adapter: overall `0.2548`; short `0.9580`; long `0.1424`. |
 
@@ -149,7 +149,7 @@ The external baselines are not uniformly plug-and-play across all four TSRA data
 | RAT | CLUTRR relation-aware baseline | yes, completed | no direct support | no direct support | no direct support | Keep as CLUTRR relation-aware Transformer baseline. |
 | FaiRR | ProofWriter | possible only with graph/proof conversion | yes, completed | not official in current repo | not direct | Keep as ProofWriter full end-to-end baseline; possible future work is a RuleTaker adapter, but it would be local engineering rather than official reproduction. |
 | GFaiR | RuleTaker variants, Hard RuleTaker, RuleTaker-E, NL satisfiability | no | not official | yes, completed | not direct | Keep as RuleTaker-family baseline; selector2 and full official pipeline results are available. |
-| NLProofS | EntailmentBank, ProofWriter/RuleTaker-style proof generation | no | possible | yes, formal test running | not direct | Keep as an additional proof-generation baseline for RuleTaker; final test file is pending after a shutdown restart. |
+| NLProofS | EntailmentBank, ProofWriter/RuleTaker-style proof generation | no | possible | yes, completed | not direct | Keep as an additional proof-generation baseline for RuleTaker; final answer/proof metrics are available. |
 | IBR | RuleTaker depth-5 / ParaRules-style iterative reasoning | no | not direct | yes, completed | not direct | Keep as an additional RuleTaker proof-reasoning baseline; depth-5 test result is available. |
 | Abstractor/RCA | synthetic relational reasoning tasks | local raw-text adapter only | local raw-text adapter only | local raw-text adapter only | local raw-text adapter only | Use only as diagnostic if needed; not a clean official baseline for the four datasets. |
 | DAT | relational/dual-attention architecture | local raw-text adapter only | local raw-text adapter only | local raw-text adapter only | local raw-text adapter only | Same as Abstractor/RCA: useful diagnostic, weak as paper-level external baseline unless adapter is carefully validated. |
@@ -510,7 +510,7 @@ Key CLUTRR takeaway:
 | GFaiR selector2 official XLNet | RuleTaker | top1 `0.9846`; top2 `0.9979` | official external component |
 | GFaiR full official pipeline | RuleTaker | proof_acc_total `0.9086`; faithful_total `0.9922` | official external pipeline |
 | IBR | RuleTaker depth-5 | full `0.9372`; proof `0.9374` | official external baseline |
-| NLProofS | RuleTaker depth-3ext | running | final test pending |
+| NLProofS | RuleTaker depth-3ext | answer overall `0.6796`; proof overall `0.9187` | completed external proof-generation baseline |
 
 ### PrOntoQA-OOD
 
@@ -577,19 +577,17 @@ Important wording for the paper:
 
 ### Not Yet Paper-Quality
 
-- NLProofS formal test result, because the current retry is still running after a shutdown interruption.
 - PrOntoQA label-accuracy claims, unless we switch to proof/trace correctness or a non-degenerate official evaluation.
 
 ## 9. Next Steps
 
 Priority for the next 2-3 days:
 
-1. Wait for the restarted NLProofS formal test to finish, then add its final test file and status.
-2. Use `docs/aggregated_results/AGGREGATED_RESULTS_20260527.md` as the source for paper tables; it contains mean/std and depth/hop grouped metrics over seeds `0/1/42`.
-3. Build the final CLUTRR paper table with TSRA, same-backbone label-only Transformer, Edge Transformer, RAT, DAT adapted, MAC-style attention, and Abstractor/RCA if desired.
-4. Redesign PrOntoQA-OOD reporting around trace/proof-step correctness rather than degenerate binary classification.
-5. Move old diagnostic/adapted external baselines to appendix language and keep official EdgeTransformer/FaiRR/GFaiR/IBR as main external comparisons.
-6. Once NLProofS is either finished or explicitly marked pending, update the paper draft's experiment section directly from this report.
+1. Use `docs/aggregated_results/AGGREGATED_RESULTS_20260527.md` as the source for paper tables; it contains mean/std and depth/hop grouped metrics over seeds `0/1/42`.
+2. Build the final CLUTRR paper table with TSRA, same-backbone label-only Transformer, Edge Transformer, RAT, DAT adapted, MAC-style attention, and Abstractor/RCA if desired.
+3. Redesign PrOntoQA-OOD reporting around trace/proof-step correctness rather than degenerate binary classification.
+4. Move old diagnostic/adapted external baselines to appendix language and keep official EdgeTransformer/FaiRR/GFaiR/IBR/NLProofS as main external comparisons.
+5. Update the paper draft's experiment section directly from this report.
 
 ## 10. Chinese Summary for Meeting / Draft Writing
 
@@ -603,6 +601,6 @@ RuleTaker 上，GFaiR split 中 BERT/RoBERTa 是小幅稳定提升，DeBERTa 提
 
 PrOntoQA-OOD 的 label accuracy 在当前 processed split 中完全饱和，baseline/TSRA 都是 `1.0`，不能作为核心 label claim。更有意义的是 trace@1：BERT 从 `0.2133 +/- 0.0448` 到 `0.4667 +/- 0.0404`，RoBERTa 从 `0.1733 +/- 0.0333` 到 `0.4856 +/- 0.0876`，DeBERTa 从 `0.2511 +/- 0.0366` 到 `0.5378 +/- 0.1482`。
 
-外部 baseline 方面，FaiRR end-to-end 在 ProofWriter 上达到 answer acc `98.403`、proof acc `97.175`；GFaiR selector2 official XLNet 在 RuleTaker 上 top1 `0.9846`，完整 GFaiR pipeline 的 proof_acc_total 为 `0.9086`、faithful_total 为 `0.9922`；IBR depth-5 的 full 为 `0.9372`；Edge Transformer 在 CLUTRR 上 overall `0.8100`、long-hop `0.6847`，但它使用结构化 graph-edge input，应该作为 structured/reference baseline，而不是和 TSRA raw-text setting 直接公平比较。NLProofS formal test 仍在运行，最终文件尚未产出。
+外部 baseline 方面，FaiRR end-to-end 在 ProofWriter 上达到 answer acc `98.403`、proof acc `97.175`；GFaiR selector2 official XLNet 在 RuleTaker 上 top1 `0.9846`，完整 GFaiR pipeline 的 proof_acc_total 为 `0.9086`、faithful_total 为 `0.9922`；IBR depth-5 的 full 为 `0.9372`；NLProofS formal test 已完成，answer overall 为 `0.6796`、proof overall 为 `0.9187`；Edge Transformer 在 CLUTRR 上 overall `0.8100`、long-hop `0.6847`，但它使用结构化 graph-edge input，应该作为 structured/reference baseline，而不是和 TSRA raw-text setting 直接公平比较。
 
 整体结论：当前结果支持 TSRA 的核心叙事。普通 Transformer 或通用 attention/relational 方法可以拟合浅层训练分布，但在 shallow-train/deep-test 的 long-hop/high-depth systematic generalization 上不足；TSRA 通过训练阶段 trace supervision 直接约束内部 reasoning-step selection，更适合 query-conditioned multi-step textual reasoning。
