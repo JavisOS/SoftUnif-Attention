@@ -1,0 +1,494 @@
+{
+  "clutrr_089907f8": [
+    {
+      "dataset": "data_089907f8",
+      "backbone": "deberta",
+      "variant": "full",
+      "seeds": 3,
+      "best_overall": "0.6262 +/- 0.0214",
+      "best_short": "0.8117 +/- 0.0181",
+      "best_long": "0.4198 +/- 0.0335",
+      "final_overall": "0.5777 +/- 0.0083",
+      "final_long": "0.3654 +/- 0.0147"
+    },
+    {
+      "dataset": "data_089907f8",
+      "backbone": "deberta",
+      "variant": "label_only",
+      "seeds": 3,
+      "best_overall": "0.4706 +/- 0.0298",
+      "best_short": "0.6602 +/- 0.0276",
+      "best_long": "0.3414 +/- 0.0293",
+      "final_overall": "0.4171 +/- 0.0146",
+      "final_long": "0.2719 +/- 0.0257"
+    },
+    {
+      "dataset": "data_089907f8",
+      "backbone": "deberta",
+      "variant": "no_consistency",
+      "seeds": 3,
+      "best_overall": "0.6222 +/- 0.0023",
+      "best_short": "0.8214 +/- 0.0056",
+      "best_long": "0.4109 +/- 0.0270",
+      "final_overall": "0.6073 +/- 0.0123",
+      "final_long": "0.3779 +/- 0.0082"
+    },
+    {
+      "dataset": "data_089907f8",
+      "backbone": "roberta",
+      "variant": "full",
+      "seeds": 3,
+      "best_overall": "0.5512 +/- 0.0176",
+      "best_short": "0.7327 +/- 0.0312",
+      "best_long": "0.3930 +/- 0.0334",
+      "final_overall": "0.5137 +/- 0.0219",
+      "final_long": "0.3432 +/- 0.0376"
+    },
+    {
+      "dataset": "data_089907f8",
+      "backbone": "roberta",
+      "variant": "label_only",
+      "seeds": 3,
+      "best_overall": "0.4887 +/- 0.0482",
+      "best_short": "0.6580 +/- 0.0327",
+      "best_long": "0.3779 +/- 0.0449",
+      "final_overall": "0.4593 +/- 0.0547",
+      "final_long": "0.3235 +/- 0.0819"
+    },
+    {
+      "dataset": "data_089907f8",
+      "backbone": "roberta",
+      "variant": "no_consistency",
+      "seeds": 3,
+      "best_overall": "0.5785 +/- 0.0154",
+      "best_short": "0.7587 +/- 0.0179",
+      "best_long": "0.4127 +/- 0.0041",
+      "final_overall": "0.5398 +/- 0.0394",
+      "final_long": "0.3824 +/- 0.0490"
+    }
+  ],
+  "clutrr_db9b8f04": [
+    {
+      "dataset": "data_db9b8f04",
+      "backbone": "deberta",
+      "variant": "label_only",
+      "seeds": 3,
+      "best_overall": "0.5862 +/- 0.0173",
+      "best_short": "0.7555 +/- 0.0076",
+      "best_long": "0.4925 +/- 0.0314",
+      "final_overall": "0.5471 +/- 0.0182",
+      "final_long": "0.4338 +/- 0.0300"
+    },
+    {
+      "dataset": "data_db9b8f04",
+      "backbone": "deberta",
+      "variant": "tsra",
+      "seeds": 3,
+      "best_overall": "0.7455 +/- 0.0167",
+      "best_short": "0.8596 +/- 0.0177",
+      "best_long": "0.6508 +/- 0.0181",
+      "final_overall": "0.7074 +/- 0.0373",
+      "final_long": "0.6131 +/- 0.0553"
+    }
+  ],
+  "prop_rows": [
+    {
+      "dataset": "proofwriter",
+      "backbone": "bert",
+      "variant": "baseline",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "0.9596 +/- 0.0029",
+      "trace_top1": "0.2053 +/- 0.0237",
+      "split": "depth-3",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/prop_bert_backbone_seeds_20260524_011602/results/proofwriter_bert_baseline_seed0_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_bert_backbone_seeds_20260524_011602/results/proofwriter_bert_baseline_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/proofwriter_bert_baseline_seed42_10ep.json"
+      ],
+      "depth5_accuracy": "0.8818 +/- 0.0086",
+      "depth5_trace_top1": "0.1459 +/- 0.0061",
+      "by_depth_3": "0.8583 +/- 0.0206",
+      "by_depth_5": "0.7038 +/- 0.0097"
+    },
+    {
+      "dataset": "proofwriter",
+      "backbone": "bert",
+      "variant": "tsra",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "0.9601 +/- 0.0030",
+      "trace_top1": "0.8315 +/- 0.0016",
+      "split": "depth-3",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/prop_bert_backbone_seeds_20260524_011602/results/proofwriter_bert_tsra_seed0_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_bert_backbone_seeds_20260524_011602/results/proofwriter_bert_tsra_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/proofwriter_bert_tsra_seed42_10ep.json"
+      ],
+      "depth5_accuracy": "0.8877 +/- 0.0073",
+      "depth5_trace_top1": "0.7841 +/- 0.0007",
+      "by_depth_3": "0.8738 +/- 0.0184",
+      "by_depth_5": "0.7114 +/- 0.0229"
+    },
+    {
+      "dataset": "proofwriter",
+      "backbone": "roberta",
+      "variant": "baseline",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "0.8703 +/- 0.1225",
+      "trace_top1": "0.2080 +/- 0.0046",
+      "split": "depth-3",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/prop_roberta_backbone_seeds_20260523_101127/results/proofwriter_roberta_baseline_seed0_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_roberta_backbone_seeds_20260523_101127/results/proofwriter_roberta_baseline_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/proofwriter_roberta_baseline_seed42_10ep.json"
+      ],
+      "depth5_accuracy": "0.8064 +/- 0.0783",
+      "depth5_trace_top1": "0.1694 +/- 0.0178",
+      "by_depth_3": "0.6745 +/- 0.1167",
+      "by_depth_5": "0.5738 +/- 0.0510"
+    },
+    {
+      "dataset": "proofwriter",
+      "backbone": "roberta",
+      "variant": "tsra",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "0.9453 +/- 0.0123",
+      "trace_top1": "0.8430 +/- 0.0053",
+      "split": "depth-3",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/prop_roberta_backbone_seeds_20260523_101127/results/proofwriter_roberta_tsra_seed0_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_roberta_backbone_seeds_20260523_101127/results/proofwriter_roberta_tsra_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/proofwriter_roberta_tsra_seed42_10ep.json"
+      ],
+      "depth5_accuracy": "0.8531 +/- 0.0157",
+      "depth5_trace_top1": "0.7934 +/- 0.0030",
+      "by_depth_3": "0.7585 +/- 0.0908",
+      "by_depth_5": "0.6006 +/- 0.0317"
+    },
+    {
+      "dataset": "proofwriter",
+      "backbone": "deberta",
+      "variant": "baseline",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "0.8663 +/- 0.1197",
+      "trace_top1": "0.2498 +/- 0.0585",
+      "split": "depth-3",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep/results/proofwriter_deberta_baseline_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_deberta_seed1_gpu7_retry_20260521_113533/results/proofwriter_deberta_baseline_seed1_10ep.json",
+        "/vepfs/tsra_outputs/additional_depth_checks/latest_depth_seed_checks/results/proofwriter_deberta_baseline_seed42_10ep.json"
+      ],
+      "depth5_accuracy": "0.8146 +/- 0.0880",
+      "depth5_trace_top1": "0.1687 +/- 0.0231",
+      "by_depth_3": "0.7938 +/- 0.2219",
+      "by_depth_5": "0.7629 +/- 0.2148"
+    },
+    {
+      "dataset": "proofwriter",
+      "backbone": "deberta",
+      "variant": "tsra",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "0.8740 +/- 0.1258",
+      "trace_top1": "0.6197 +/- 0.3338",
+      "split": "depth-3",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep/results/proofwriter_deberta_tsra_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_deberta_seed1_failed_rerun_20260522_041440/results/proofwriter_deberta_tsra_seed1_10ep.json",
+        "/vepfs/tsra_outputs/additional_depth_checks/latest_depth_seed_checks/results/proofwriter_deberta_tsra_seed42_10ep.json"
+      ],
+      "depth5_accuracy": "0.8068 +/- 0.0787",
+      "depth5_trace_top1": "0.5896 +/- 0.3034",
+      "by_depth_3": "0.7372 +/- 0.1971",
+      "by_depth_5": "0.6570 +/- 0.1829"
+    },
+    {
+      "dataset": "ruletaker_gfair",
+      "backbone": "bert",
+      "variant": "baseline",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "0.9624 +/- 0.0015",
+      "trace_top1": "0.6090 +/- 0.0957",
+      "split": "test",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/prop_bert_backbone_seeds_20260524_011602/results/ruletaker_bert_baseline_seed0_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_bert_backbone_seeds_20260524_011602/results/ruletaker_bert_baseline_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/ruletaker_bert_baseline_seed42_10ep.json"
+      ],
+      "by_depth": "official test depth metadata unavailable (-1 bucket)"
+    },
+    {
+      "dataset": "ruletaker_gfair",
+      "backbone": "bert",
+      "variant": "tsra",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "0.9646 +/- 0.0022",
+      "trace_top1": "0.0226 +/- 0.0017",
+      "split": "test",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/prop_bert_backbone_seeds_20260524_011602/results/ruletaker_bert_tsra_seed0_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_bert_backbone_seeds_20260524_011602/results/ruletaker_bert_tsra_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/ruletaker_bert_tsra_seed42_10ep.json"
+      ],
+      "by_depth": "official test depth metadata unavailable (-1 bucket)"
+    },
+    {
+      "dataset": "ruletaker_gfair",
+      "backbone": "roberta",
+      "variant": "baseline",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "0.9559 +/- 0.0030",
+      "trace_top1": "0.5065 +/- 0.1179",
+      "split": "test",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/prop_roberta_backbone_seeds_20260523_101127/results/ruletaker_roberta_baseline_seed0_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_roberta_backbone_seeds_20260523_101127/results/ruletaker_roberta_baseline_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/ruletaker_roberta_baseline_seed42_10ep.json"
+      ],
+      "by_depth": "official test depth metadata unavailable (-1 bucket)"
+    },
+    {
+      "dataset": "ruletaker_gfair",
+      "backbone": "roberta",
+      "variant": "tsra",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "0.9615 +/- 0.0009",
+      "trace_top1": "0.0128 +/- 0.0036",
+      "split": "test",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/prop_roberta_backbone_seeds_20260523_101127/results/ruletaker_roberta_tsra_seed0_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_roberta_backbone_seeds_20260523_101127/results/ruletaker_roberta_tsra_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/ruletaker_roberta_tsra_seed42_10ep.json"
+      ],
+      "by_depth": "official test depth metadata unavailable (-1 bucket)"
+    },
+    {
+      "dataset": "ruletaker_gfair",
+      "backbone": "deberta",
+      "variant": "baseline",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "0.7215 +/- 0.0000",
+      "trace_top1": "0.4201 +/- 0.1834",
+      "split": "test",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep/results/ruletaker_deberta_baseline_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_deberta_seed1_failed_rerun_20260522_041440/results/ruletaker_deberta_baseline_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/ruletaker_deberta_baseline_seed42_10ep.json"
+      ],
+      "by_depth": "official test depth metadata unavailable (-1 bucket)"
+    },
+    {
+      "dataset": "ruletaker_gfair",
+      "backbone": "deberta",
+      "variant": "tsra",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "0.9664 +/- 0.0016",
+      "trace_top1": "0.0899 +/- 0.1329",
+      "split": "test",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep/results/ruletaker_deberta_tsra_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_deberta_seed1_failed_rerun_20260522_041440/results/ruletaker_deberta_tsra_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/ruletaker_deberta_tsra_seed42_10ep.json"
+      ],
+      "by_depth": "official test depth metadata unavailable (-1 bucket)"
+    },
+    {
+      "dataset": "prontoqa",
+      "backbone": "bert",
+      "variant": "baseline",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "1.0000 +/- 0.0000",
+      "trace_top1": "0.2133 +/- 0.0448",
+      "split": "ood",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/prop_bert_backbone_seeds_20260524_011602/results/prontoqa_bert_baseline_seed0_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_bert_backbone_seeds_20260524_011602/results/prontoqa_bert_baseline_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/prontoqa_bert_baseline_seed42_10ep.json"
+      ],
+      "by_depth_3": "1.0000 +/- 0.0000",
+      "by_depth_4": "1.0000 +/- 0.0000"
+    },
+    {
+      "dataset": "prontoqa",
+      "backbone": "bert",
+      "variant": "tsra",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "1.0000 +/- 0.0000",
+      "trace_top1": "0.4667 +/- 0.0404",
+      "split": "ood",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/prop_bert_backbone_seeds_20260524_011602/results/prontoqa_bert_tsra_seed0_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_bert_backbone_seeds_20260524_011602/results/prontoqa_bert_tsra_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/prontoqa_bert_tsra_seed42_10ep.json"
+      ],
+      "by_depth_3": "1.0000 +/- 0.0000",
+      "by_depth_4": "1.0000 +/- 0.0000"
+    },
+    {
+      "dataset": "prontoqa",
+      "backbone": "roberta",
+      "variant": "baseline",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "1.0000 +/- 0.0000",
+      "trace_top1": "0.1733 +/- 0.0333",
+      "split": "ood",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/prop_roberta_backbone_seeds_20260523_101127/results/prontoqa_roberta_baseline_seed0_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_roberta_backbone_seeds_20260523_101127/results/prontoqa_roberta_baseline_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/prontoqa_roberta_baseline_seed42_10ep.json"
+      ],
+      "by_depth_3": "1.0000 +/- 0.0000",
+      "by_depth_4": "1.0000 +/- 0.0000"
+    },
+    {
+      "dataset": "prontoqa",
+      "backbone": "roberta",
+      "variant": "tsra",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "1.0000 +/- 0.0000",
+      "trace_top1": "0.4856 +/- 0.0876",
+      "split": "ood",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/prop_roberta_backbone_seeds_20260523_101127/results/prontoqa_roberta_tsra_seed0_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_roberta_backbone_seeds_20260523_101127/results/prontoqa_roberta_tsra_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/prontoqa_roberta_tsra_seed42_10ep.json"
+      ],
+      "by_depth_3": "1.0000 +/- 0.0000",
+      "by_depth_4": "1.0000 +/- 0.0000"
+    },
+    {
+      "dataset": "prontoqa",
+      "backbone": "deberta",
+      "variant": "baseline",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "1.0000 +/- 0.0000",
+      "trace_top1": "0.2511 +/- 0.0366",
+      "split": "ood",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep/results/prontoqa_deberta_baseline_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_deberta_seed1_failed_rerun_20260522_041440/results/prontoqa_deberta_baseline_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/prontoqa_deberta_baseline_seed42_10ep.json"
+      ],
+      "by_depth_3": "1.0000 +/- 0.0000",
+      "by_depth_4": "1.0000 +/- 0.0000"
+    },
+    {
+      "dataset": "prontoqa",
+      "backbone": "deberta",
+      "variant": "tsra",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "1.0000 +/- 0.0000",
+      "trace_top1": "0.5378 +/- 0.1482",
+      "split": "ood",
+      "paths": [
+        "/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep/results/prontoqa_deberta_tsra_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/prop_deberta_seed1_failed_rerun_20260522_041440/results/prontoqa_deberta_tsra_seed1_10ep.json",
+        "/vepfs/tsra_outputs/formal_10ep/latest_seed42_completion/results/prontoqa_deberta_tsra_seed42_10ep.json"
+      ],
+      "by_depth_3": "1.0000 +/- 0.0000",
+      "by_depth_4": "1.0000 +/- 0.0000"
+    }
+  ],
+  "ruletaker_raw": [
+    {
+      "variant": "baseline",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "0.5234 +/- 0.0000",
+      "qdep1": "0.5399 +/- 0.0000",
+      "qdep2": "0.5081 +/- 0.0000",
+      "qdep3": "0.5027 +/- 0.0000",
+      "qdep4": "0.5038 +/- 0.0000",
+      "qdep5": "0.5019 +/- 0.0000",
+      "trace_top1": "0.1913 +/- 0.0051"
+    },
+    {
+      "variant": "tsra",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "accuracy": "0.7783 +/- 0.1353",
+      "qdep1": "0.8188 +/- 0.2180",
+      "qdep2": "0.8463 +/- 0.1650",
+      "qdep3": "0.6414 +/- 0.1981",
+      "qdep4": "0.5263 +/- 0.1471",
+      "qdep5": "0.4944 +/- 0.2509",
+      "trace_top1": "0.7444 +/- 0.2414"
+    }
+  ]
+}

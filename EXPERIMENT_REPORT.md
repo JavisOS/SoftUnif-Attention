@@ -22,95 +22,98 @@ Evaluation emphasizes shallow-train / deep-test settings:
 
 ## 0. Latest Status Snapshot
 
-Updated on **2026-05-26 08:12 UTC**. This is the current authoritative status for the experiment report. Older "live update" notes below are retained only as execution history and should not be cited over this section.
+Updated on **2026-05-27 08:50 UTC** after the seed-42 completion queue finished. This section is the current authoritative summary. Values are `mean +/- sample-std` over seeds `0/1/42` unless stated otherwise.
 
-### Running Jobs
+### Completion Status
 
-- **NLProofS formal RuleTaker test is still running.** The previous full test was interrupted by a dev-machine shutdown at about `15826/17580` examples and did not write a final result file. It was restarted from the trained prover checkpoint at:
-  `/vepfs/tsra_outputs/official_external/latest_nlproofs_ruletaker/prover/lightning_logs/version_0/checkpoints/epoch=19-step=16940.ckpt`.
-- Current retry path:
-  `/vepfs/tsra_outputs/official_external/latest_nlproofs_ruletaker_test`.
-- Current progress at the latest check: about `7987/17580` test batches (`~45%`) after restart. No final `results_test*.json` exists yet.
-- GPU keepalive is active on GPU1-4 using `gpu_run.py`; NLProofS is on GPU0.
-- **Additional depth/seed checks are running on GPUs 5-7.** This follow-up queue adds:
-  CLUTRR `data_db9b8f04` 2/3/4-hop train, strict RuleTaker raw-data QDep 1/2 train -> QDep 1-5 test, and ProofWriter DeBERTa seed-42 baseline/TSRA checks.
-  Current symlink: `/vepfs/tsra_outputs/additional_depth_checks/latest_depth_seed_checks`.
-- **Three-seed policy update:** the formal report should ultimately aggregate seeds `0/1/42`. Most earlier formal tables were only seed `0/1`; a queued follow-up script,
-  `scripts/run_seed42_completion_after_additional.sh`, waits for the current depth/seed queue and then fills the missing seed-42 runs for the main CLUTRR, ProofWriter, RuleTaker, and PrOntoQA tables.
+- **TSRA/backbone runs are complete:** additional depth/seed checks are `14/14 done, 0 failed`; seed-42 completion is `22/22 done, 0 failed`.
+- **Final aggregated artifacts:** `docs/aggregated_results/AGGREGATED_RESULTS_20260527.md` and `docs/aggregated_results/aggregated_results_20260527.json`.
+- **Aggregation script:** `scripts/aggregate_experiment_results.py`.
+- **Only remaining live process:** NLProofS formal RuleTaker test is still running on GPU0 and has not produced a final result file. Treat NLProofS as pending external-reference evidence, not part of the completed TSRA main table.
 
-### Completed Main TSRA/Backbone Runs
+### Completed TSRA Main Results
 
-The earlier formal TSRA/backbone runs for **CLUTRR, ProofWriter, RuleTaker, and PrOntoQA-OOD** mostly cover seeds `0/1`. A third-seed completion queue is now scheduled so final paper tables can report mean/std over seeds `0/1/42`. NLProofS remains the only optional external baseline test still running.
+#### CLUTRR `data_089907f8`
 
-| Dataset | Backbone | Model | Seeds | Main Result |
-|---|---|---|---:|---|
-| CLUTRR `data_089907f8` | DeBERTa/RoBERTa | TSRA ablations | 0/1 where available | Formal CLUTRR ablation queue complete under `/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep`. |
-| ProofWriter | BERT | baseline | 0,1 | depth-3 `0.9629/0.9577`; depth-5 `0.8899/0.8728`. |
-| ProofWriter | BERT | TSRA | 0,1 | depth-3 `0.9635/0.9591`; depth-5 `0.8952/0.8873`. |
-| ProofWriter | RoBERTa | baseline | 0,1 | depth-3 `0.9406/0.7288`; depth-5 `0.8507/0.7160`. |
-| ProofWriter | RoBERTa | TSRA | 0,1 | depth-3 `0.9322/0.9565`; depth-5 `0.8386/0.8698`. |
-| ProofWriter | DeBERTa | baseline | 0,1 | depth-3 `0.9473/0.9228`; depth-5 `0.8855/0.8422`. |
-| ProofWriter | DeBERTa | TSRA | 0,1 | depth-3 `0.9479/0.9454`; depth-5 `0.8550/0.8495`; trace@1 strongly improves. |
-| RuleTaker | BERT | baseline | 0,1 | test accuracy `0.9608/0.9638`. |
-| RuleTaker | BERT | TSRA | 0,1 | test accuracy `0.9637/0.9630`. |
-| RuleTaker | RoBERTa | baseline | 0,1 | test accuracy `0.9564/0.9587`. |
-| RuleTaker | RoBERTa | TSRA | 0,1 | test accuracy `0.9618/0.9604`. |
-| RuleTaker | DeBERTa | baseline | 0,1 | test accuracy `0.7215/0.7215`. |
-| RuleTaker | DeBERTa | TSRA | 0,1 | test accuracy `0.9646/0.9676`. |
-| PrOntoQA-OOD | BERT | baseline | 0,1 | label acc `1.0/1.0`; trace@1 `0.1767/0.2000`. |
-| PrOntoQA-OOD | BERT | TSRA | 0,1 | label acc `1.0/1.0`; trace@1 `0.5100/0.4300`. |
-| PrOntoQA-OOD | RoBERTa | baseline | 0,1 | label acc `1.0/1.0`; trace@1 `0.1733/0.2067`. |
-| PrOntoQA-OOD | RoBERTa | TSRA | 0,1 | label acc `1.0/1.0`; trace@1 `0.3867/0.5167`. |
-| PrOntoQA-OOD | DeBERTa | baseline | 0,1 | label acc `1.0/1.0`; trace@1 `0.2300/0.2933`. |
-| PrOntoQA-OOD | DeBERTa | TSRA | 0,1 | label acc `1.0/1.0`; trace@1 `0.6233/0.3667`. |
+This is the primary CLUTRR split used throughout TSRA. The table reports the best logged evaluation point across 10 epochs; final-epoch values are in the aggregated artifact for audit.
 
-### Completed CLUTRR TSRA Ablation
-
-The formal CLUTRR ablation queue is complete under `/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep`. It includes DeBERTa and RoBERTa with seeds 0/1 for:
-
-- `full`: label + trace/next-hop supervision + consistency setting used by the formal TSRA run.
-- `label_only`: same backbone trained without trace/next-hop supervision.
-- `no_consistency`: trace/next-hop supervision retained, consistency component disabled.
-
-The table below reports the **best logged evaluation point** from the 10-epoch queue for each seed; final-epoch values remain in the `.done` logs and can be used for a stricter appendix table.
-
-| Backbone | Variant | Seed | Overall | Short-hop | Long-hop >=6 |
+| Backbone | Variant | Seeds | Overall | Short-hop | Long-hop >=6 |
 |---|---|---:|---:|---:|---:|
-| DeBERTa | full | 0 | 0.6475 | 0.8279 | 0.4545 |
-| DeBERTa | full | 1 | 0.6030 | 0.8117 | 0.3930 |
-| DeBERTa | label_only | 0 | 0.4904 | 0.7045 | 0.3155 |
-| DeBERTa | label_only | 1 | 0.4677 | 0.6396 | 0.3743 |
-| DeBERTa | no_consistency | 0 | 0.6213 | 0.8182 | 0.4278 |
-| DeBERTa | no_consistency | 1 | 0.6204 | 0.8279 | 0.3797 |
-| RoBERTa | full | 0 | 0.5253 | 0.7013 | 0.3690 |
-| RoBERTa | full | 1 | 0.5297 | 0.7435 | 0.3369 |
-| RoBERTa | label_only | 0 | 0.4337 | 0.6234 | 0.3289 |
-| RoBERTa | label_only | 1 | 0.4948 | 0.6818 | 0.3396 |
-| RoBERTa | no_consistency | 0 | 0.5951 | 0.7792 | 0.4118 |
-| RoBERTa | no_consistency | 1 | 0.5628 | 0.7468 | 0.3957 |
+| DeBERTa | full TSRA | 3 | 0.6262 +/- 0.0214 | 0.8117 +/- 0.0181 | 0.4198 +/- 0.0335 |
+| DeBERTa | label-only | 3 | 0.4706 +/- 0.0298 | 0.6602 +/- 0.0276 | 0.3414 +/- 0.0293 |
+| DeBERTa | no-consistency | 3 | 0.6222 +/- 0.0023 | 0.8214 +/- 0.0056 | 0.4109 +/- 0.0270 |
+| RoBERTa | full TSRA | 3 | 0.5512 +/- 0.0176 | 0.7327 +/- 0.0312 | 0.3930 +/- 0.0334 |
+| RoBERTa | label-only | 3 | 0.4887 +/- 0.0482 | 0.6580 +/- 0.0327 | 0.3779 +/- 0.0449 |
+| RoBERTa | no-consistency | 3 | 0.5785 +/- 0.0154 | 0.7587 +/- 0.0179 | 0.4127 +/- 0.0041 |
 
-Mean over seeds:
+Interpretation: trace/next-hop supervision is the key positive signal. DeBERTa improves from `0.4706` label-only to `0.6262` full TSRA overall, and from `0.3414` to `0.4198` on long-hop. The consistency term is not uniformly helpful, so the paper should claim trace-supervised step selection more strongly than the consistency regularizer.
 
-| Backbone | Variant | Overall | Short-hop | Long-hop >=6 |
+#### CLUTRR `data_db9b8f04` 2/3/4-Hop Train Check
+
+This follow-up trains on 2/3/4-hop examples and tests long-hop generalization.
+
+| Backbone | Variant | Seeds | Overall | Short-hop | Long-hop >=6 |
+|---|---|---:|---:|---:|---:|
+| DeBERTa | label-only | 3 | 0.5862 +/- 0.0173 | 0.7555 +/- 0.0076 | 0.4925 +/- 0.0314 |
+| DeBERTa | TSRA | 3 | 0.7455 +/- 0.0167 | 0.8596 +/- 0.0177 | 0.6508 +/- 0.0181 |
+
+Interpretation: adding 4-hop training improves both models, but TSRA keeps a large margin, including `+0.1583` long-hop accuracy over label-only.
+
+#### ProofWriter
+
+Train depth is 0/1/2; test uses depth-3 and depth-5. Accuracy and trace@1 are reported separately.
+
+| Backbone | Model | Seeds | Depth-3 Acc | Depth-5 Acc | Depth-3 Trace@1 | Depth-5 Trace@1 |
+|---|---|---:|---:|---:|---:|---:|
+| BERT | baseline | 3 | 0.9596 +/- 0.0029 | 0.8818 +/- 0.0086 | 0.2053 +/- 0.0237 | 0.1459 +/- 0.0061 |
+| BERT | TSRA | 3 | 0.9601 +/- 0.0030 | 0.8877 +/- 0.0073 | 0.8315 +/- 0.0016 | 0.7841 +/- 0.0007 |
+| RoBERTa | baseline | 3 | 0.8703 +/- 0.1225 | 0.8064 +/- 0.0783 | 0.2080 +/- 0.0046 | 0.1694 +/- 0.0178 |
+| RoBERTa | TSRA | 3 | 0.9453 +/- 0.0123 | 0.8531 +/- 0.0157 | 0.8430 +/- 0.0053 | 0.7934 +/- 0.0030 |
+| DeBERTa | baseline | 3 | 0.8663 +/- 0.1197 | 0.8146 +/- 0.0880 | 0.2498 +/- 0.0585 | 0.1687 +/- 0.0231 |
+| DeBERTa | TSRA | 3 | 0.8740 +/- 0.1258 | 0.8068 +/- 0.0787 | 0.6197 +/- 0.3338 | 0.5896 +/- 0.3034 |
+
+Interpretation: BERT and RoBERTa show the cleanest ProofWriter story: label accuracy is similar or improved, while trace@1 jumps sharply. DeBERTa seed42 baseline/TSRA are identical in the additional check, which should be treated as an audit flag rather than a strong negative conclusion.
+
+#### RuleTaker GFaiR Split
+
+This uses the GFaiR RuleTaker-3ext-sat split. Official test depth metadata is not available in the exported test bucket, so depth grouping is reported separately in the raw-QDep check below.
+
+| Backbone | Model | Seeds | Test Acc | Trace@1 |
 |---|---|---:|---:|---:|
-| DeBERTa | full | 0.6253 | 0.8198 | 0.4238 |
-| DeBERTa | label_only | 0.4791 | 0.6721 | 0.3449 |
-| DeBERTa | no_consistency | 0.6209 | 0.8231 | 0.4038 |
-| RoBERTa | full | 0.5275 | 0.7224 | 0.3530 |
-| RoBERTa | label_only | 0.4643 | 0.6526 | 0.3343 |
-| RoBERTa | no_consistency | 0.5790 | 0.7630 | 0.4038 |
+| BERT | baseline | 3 | 0.9624 +/- 0.0015 | 0.6090 +/- 0.0957 |
+| BERT | TSRA | 3 | 0.9646 +/- 0.0022 | 0.0226 +/- 0.0017 |
+| RoBERTa | baseline | 3 | 0.9559 +/- 0.0030 | 0.5065 +/- 0.1179 |
+| RoBERTa | TSRA | 3 | 0.9615 +/- 0.0009 | 0.0128 +/- 0.0036 |
+| DeBERTa | baseline | 3 | 0.7215 +/- 0.0000 | 0.4201 +/- 0.1834 |
+| DeBERTa | TSRA | 3 | 0.9664 +/- 0.0016 | 0.0899 +/- 0.1329 |
 
-Interpretation:
+Interpretation: label accuracy improves most clearly for DeBERTa, while BERT/RoBERTa have smaller but stable gains. The trace@1 metric on this converted GFaiR split is not reliable as an internal reasoning metric because the exported test bucket does not preserve comparable depth/trace metadata; cite the raw-QDep and ProofWriter trace metrics instead.
 
-- The strongest and most consistent ablation signal is **trace/next-hop supervision vs label-only**. DeBERTa improves from `0.4791` to `0.6253` overall and from `0.3449` to `0.4238` on long-hop; RoBERTa improves from `0.4643` to `0.5275` overall.
-- The consistency component is not uniformly positive in these reruns. For DeBERTa, `full` and `no_consistency` are close; for RoBERTa, `no_consistency` is higher than `full`. This should be reported honestly: the core evidence supports trace-supervised step selection, while the consistency term needs more careful tuning before being claimed as essential.
+#### RuleTaker Raw Strict QDep 1/2 Train -> 1-5 Test
 
-Interpretation for the current paper draft:
+This stricter raw-data setting filters by question-level proof depth (`QDep`) and provides the clearest RuleTaker depth-generalization audit.
 
-- On **ProofWriter**, BERT+TSRA gives the cleanest stable improvement over BERT baseline, especially at depth-5.
-- On **RuleTaker**, BERT/RoBERTa TSRA is roughly tied to or slightly above the corresponding baseline; this should be reported as a stable result rather than overstated.
-- On **PrOntoQA-OOD**, label accuracy is degenerate in the generated split, but TSRA substantially improves trace@1 for BERT/RoBERTa. Treat this as internal reasoning/trace evidence, not label-accuracy evidence.
-- On **CLUTRR**, EdgeTransformer remains the strongest structured graph-edge baseline; TSRA comparisons must clearly separate raw-text/same-backbone settings from structured graph-edge reference baselines.
+| Backbone | Model | Seeds | Overall | QDep1 | QDep2 | QDep3 | QDep4 | QDep5 | Trace@1 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| DeBERTa | baseline | 3 | 0.5234 +/- 0.0000 | 0.5399 +/- 0.0000 | 0.5081 +/- 0.0000 | 0.5027 +/- 0.0000 | 0.5038 +/- 0.0000 | 0.5019 +/- 0.0000 | 0.1913 +/- 0.0051 |
+| DeBERTa | TSRA | 3 | 0.7783 +/- 0.1353 | 0.8188 +/- 0.2180 | 0.8463 +/- 0.1650 | 0.6414 +/- 0.1981 | 0.5263 +/- 0.1471 | 0.4944 +/- 0.2509 | 0.7444 +/- 0.2414 |
+
+Interpretation: TSRA greatly improves overall strict-QDep accuracy and trace@1, but seed variance is large on the deepest QDep buckets. This is useful supporting evidence, not yet the cleanest final headline table.
+
+#### PrOntoQA-OOD
+
+The processed PrOntoQA-OOD label task is saturated, so label accuracy is a sanity check and trace@1 is the meaningful TSRA signal.
+
+| Backbone | Model | Seeds | OOD Acc | Trace@1 |
+|---|---|---:|---:|---:|
+| BERT | baseline | 3 | 1.0000 +/- 0.0000 | 0.2133 +/- 0.0448 |
+| BERT | TSRA | 3 | 1.0000 +/- 0.0000 | 0.4667 +/- 0.0404 |
+| RoBERTa | baseline | 3 | 1.0000 +/- 0.0000 | 0.1733 +/- 0.0333 |
+| RoBERTa | TSRA | 3 | 1.0000 +/- 0.0000 | 0.4856 +/- 0.0876 |
+| DeBERTa | baseline | 3 | 1.0000 +/- 0.0000 | 0.2511 +/- 0.0366 |
+| DeBERTa | TSRA | 3 | 1.0000 +/- 0.0000 | 0.5378 +/- 0.1482 |
+
+Interpretation: do not use PrOntoQA label accuracy as a central claim. Use it as an internal reasoning/trace supervision sanity check, and compare against reported PrOntoQA-OOD baselines qualitatively or in a reference table.
 
 ### Completed External Baselines
 
@@ -166,7 +169,7 @@ Current judgment:
 - **Required split:** `data/data_089907f8`.
 - **Train split:** `1.2,1.3_train.csv`, containing 2-hop and 3-hop examples.
 - **Test split:** `1.2_test.csv` through `1.10_test.csv`.
-- **Follow-up split:** `data/data_db9b8f04`, with `1.2,1.3,1.4_train.csv` for 2/3/4-hop training. A DeBERTa TSRA-vs-label-only seed `0/1/42` queue is running under `/vepfs/tsra_outputs/additional_depth_checks/latest_depth_seed_checks`.
+- **Follow-up split:** `data/data_db9b8f04`, with `1.2,1.3,1.4_train.csv` for 2/3/4-hop training. The DeBERTa TSRA-vs-label-only seed `0/1/42` queue is complete under `/vepfs/tsra_outputs/additional_depth_checks/latest_depth_seed_checks`.
 - **Depth/hop definition:** length of the query-subject to query-object entity path.
 - **Trace definition:** entity/relation path from query subject to query object.
 - **Evaluation:** overall accuracy, short-hop accuracy, long-hop accuracy, per-hop accuracy.
@@ -193,7 +196,7 @@ Current judgment:
 - **Available settings:** depth-0, depth-1, depth-2, depth-3, depth-3ext, depth-5, hard RuleTaker variants.
 - **Trace definition:** fact/rule/proposition proof-step sequence from provided proof metadata.
 - **Current split used:** GFaiR RuleTaker-3ext-sat train/dev/test with `*_withmidprove.pkl`.
-- **Strict raw-depth follow-up:** a new `ruletaker_raw` loader filters by question-level `QDep`, not only by directory-level `depth-*`. The running check trains on QDep `1,2` from raw `depth-1/depth-2` train files and evaluates QDep `1,2,3,4,5` from raw depth `1,2,3,5` dev/test files.
+- **Strict raw-depth follow-up:** a new `ruletaker_raw` loader filters by question-level `QDep`, not only by directory-level `depth-*`. The completed check trains on QDep `1,2` from raw `depth-1/depth-2` train files and evaluates QDep `1,2,3,4,5` from raw depth `1,2,3,5` dev/test files.
 - **Current status:** ready; TSRA-Prop and GFaiR component experiments have been run.
 
 ### PrOntoQA-OOD
@@ -582,22 +585,24 @@ Important wording for the paper:
 Priority for the next 2-3 days:
 
 1. Wait for the restarted NLProofS formal test to finish, then add its final test file and status.
-2. Build final aggregation tables from BERT/RoBERTa/DeBERTa seed outputs: mean, standard deviation, and depth/hop grouped metrics.
-3. Build final CLUTRR table with TSRA, same-backbone Transformer classifier from the draft/logs, Edge Transformer, RAT, DAT adapted, MAC-style attention, and Abstractor/RCA if desired.
+2. Use `docs/aggregated_results/AGGREGATED_RESULTS_20260527.md` as the source for paper tables; it contains mean/std and depth/hop grouped metrics over seeds `0/1/42`.
+3. Build the final CLUTRR paper table with TSRA, same-backbone label-only Transformer, Edge Transformer, RAT, DAT adapted, MAC-style attention, and Abstractor/RCA if desired.
 4. Redesign PrOntoQA-OOD reporting around trace/proof-step correctness rather than degenerate binary classification.
 5. Move old diagnostic/adapted external baselines to appendix language and keep official EdgeTransformer/FaiRR/GFaiR/IBR as main external comparisons.
-6. Once tables are frozen, update the paper draft's experiment section directly from this report.
+6. Once NLProofS is either finished or explicitly marked pending, update the paper draft's experiment section directly from this report.
 
 ## 10. Chinese Summary for Meeting / Draft Writing
 
-本轮实验已经把四个数据集都准备到了可实验状态：CLUTRR 和 RuleTaker 使用仓库已有数据，ProofWriter 已从官方 S3 下载并传到开发机，PrOntoQA-OOD 官方数据和官方 FLAN-T5 输出也已整理完成。CLUTRR 统一使用我们一直采用的 `data_089907f8` split。
+本轮实验已经完成统一汇总。四个数据集都已经有 TSRA 结果，主要表格都补齐到 seeds `0/1/42`，并且已经产出 mean/std 和 depth/hop 分组指标。最终聚合文件在 `docs/aggregated_results/AGGREGATED_RESULTS_20260527.md`，机器可读 JSON 在 `docs/aggregated_results/aggregated_results_20260527.json`。
 
-目前最有力的结论来自 CLUTRR 和 ProofWriter/RuleTaker 的多 backbone 结果。CLUTRR 中，TSRA-DeBERTa 在 raw-text 输入、训练时使用 trace supervision、测试时不使用 gold trace 的设置下，达到 overall 0.6370、short-hop 0.8052、long-hop 0.4332。相比之下，DAT 和 MAC-style attention 在浅层 hop 上可以学得很好，例如 DAT short-hop 达到 0.9580，说明模型并不是训练失败；但它的 long-hop 只有 0.1424，MAC-style attention long-hop 也只有 0.1283。这说明普通 attention/relational inductive bias 更容易学到浅层模式或局部关系组合，而不一定真正学会可系统泛化的多步推理。
+CLUTRR 是目前最干净的主结果。我们一直使用的 `data_089907f8` split 上，DeBERTa label-only 的 overall/long-hop 分别是 `0.4706 +/- 0.0298` 和 `0.3414 +/- 0.0293`，DeBERTa full TSRA 提升到 `0.6262 +/- 0.0214` 和 `0.4198 +/- 0.0335`。新增的 `data_db9b8f04` 2/3/4-hop train 检查也支持同样结论：label-only long-hop 是 `0.4925 +/- 0.0314`，TSRA 是 `0.6508 +/- 0.0181`。这说明 trace-supervised step selection 对 long-hop generalization 有稳定贡献。
 
-Edge Transformer 在 CLUTRR 上效果很好，overall 0.8100、long-hop 0.6847，但它使用结构化 graph-edge input，因此应该作为 structured/reference baseline，而不是和 TSRA raw-text setting 直接公平比较。
+ProofWriter 上，BERT 和 RoBERTa 的 TSRA 结果最适合写入正文：BERT depth-5 从 `0.8818 +/- 0.0086` 提升到 `0.8877 +/- 0.0073`，同时 trace@1 从 `0.1459 +/- 0.0061` 提升到 `0.7841 +/- 0.0007`；RoBERTa depth-5 从 `0.8064 +/- 0.0783` 提升到 `0.8531 +/- 0.0157`，trace@1 从 `0.1694 +/- 0.0178` 提升到 `0.7934 +/- 0.0030`。DeBERTa 的 seed42 baseline/TSRA 异常相同，建议作为审计点，不作为强结论。
 
-ProofWriter 和 RuleTaker 方面，BERT/RoBERTa 的 10epoch seed 实验已经完成。BERT 在 ProofWriter depth-5 上从 baseline 的 0.8899/0.8728 提升到 TSRA 的 0.8952/0.8873；RoBERTa 的 TSRA 结果也明显比不稳定的 baseline seed 更稳。RuleTaker 上 BERT/RoBERTa 的 TSRA 与 baseline 基本持平到小幅提升，应作为稳定但不夸大的结果呈现。
+RuleTaker 上，GFaiR split 中 BERT/RoBERTa 是小幅稳定提升，DeBERTa 提升很大：baseline `0.7215 +/- 0.0000`，TSRA `0.9664 +/- 0.0016`。更严格的 raw QDep 1/2 train -> 1-5 test 检查中，DeBERTa baseline overall 为 `0.5234 +/- 0.0000`，TSRA 为 `0.7783 +/- 0.1353`；这个结果支持 TSRA，但方差比较大，应该作为补充实验呈现。
 
-外部 baseline 方面，FaiRR end-to-end 在 ProofWriter 上达到 answer acc 98.403、proof acc 97.175；GFaiR selector2 official XLNet 在 RuleTaker 上 top1 0.9846，完整 GFaiR pipeline 的 proof_acc_total 为 0.9086、faithful_total 为 0.9922；IBR depth-5 也已经跑出 full 0.9372。NLProofS formal test 因开发机关机被中断，目前已经从 checkpoint 重启，最终 test 文件仍在等待。
+PrOntoQA-OOD 的 label accuracy 在当前 processed split 中完全饱和，baseline/TSRA 都是 `1.0`，不能作为核心 label claim。更有意义的是 trace@1：BERT 从 `0.2133 +/- 0.0448` 到 `0.4667 +/- 0.0404`，RoBERTa 从 `0.1733 +/- 0.0333` 到 `0.4856 +/- 0.0876`，DeBERTa 从 `0.2511 +/- 0.0366` 到 `0.5378 +/- 0.1482`。
 
-整体上，当前结果支持 TSRA 的核心叙事：普通 Transformer 或通用 attention/relational reasoning 方法可以拟合浅层训练分布，但在 shallow-train/deep-test 的 long-hop systematic generalization 上明显不足；TSRA 通过训练阶段的 trace supervision 更直接地约束内部 reasoning-step selection，因此更适合 query-conditioned multi-step textual reasoning。
+外部 baseline 方面，FaiRR end-to-end 在 ProofWriter 上达到 answer acc `98.403`、proof acc `97.175`；GFaiR selector2 official XLNet 在 RuleTaker 上 top1 `0.9846`，完整 GFaiR pipeline 的 proof_acc_total 为 `0.9086`、faithful_total 为 `0.9922`；IBR depth-5 的 full 为 `0.9372`；Edge Transformer 在 CLUTRR 上 overall `0.8100`、long-hop `0.6847`，但它使用结构化 graph-edge input，应该作为 structured/reference baseline，而不是和 TSRA raw-text setting 直接公平比较。NLProofS formal test 仍在运行，最终文件尚未产出。
+
+整体结论：当前结果支持 TSRA 的核心叙事。普通 Transformer 或通用 attention/relational 方法可以拟合浅层训练分布，但在 shallow-train/deep-test 的 long-hop/high-depth systematic generalization 上不足；TSRA 通过训练阶段 trace supervision 直接约束内部 reasoning-step selection，更适合 query-conditioned multi-step textual reasoning。
