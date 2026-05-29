@@ -44,6 +44,6 @@ Important audit note: `label-only` in these CLUTRR tables means a TSRA-architect
 
 - This file merges the newly completed CLUTRR backbone sweep with the previously audited DeBERTa/RoBERTa CLUTRR rows from `AGGREGATED_RESULTS_20260527.md`.
 - The merged tables replace the older CLUTRR same-backbone table from the draft, whose configuration was not reliable.
-- `label-only` is an architecture ablation, not a pure Transformer classifier baseline; use `CLUTRR_VANILLA_CLASSIFIER_AUDIT_20260529.md` for plain RoBERTa/DeBERTa-v3 classifier numbers.
+- `label-only` is an architecture ablation, not a pure Transformer classifier baseline; use `CLUTRR_VANILLA_CLASSIFIER_AUDIT_20260529.md` for plain BERT/RoBERTa/DeBERTa/DeBERTa-v3/ModernBERT classifier numbers.
 - `data_089907f8` is the primary TSRA CLUTRR split with 2/3-hop training.
 - `data_db9b8f04` is the follow-up 2/3/4-hop training split.
