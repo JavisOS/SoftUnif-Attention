@@ -22,42 +22,57 @@ Evaluation emphasizes shallow-train / deep-test settings:
 
 ## 0. Latest Status Snapshot
 
-Updated on **2026-05-27 14:15 UTC** after the seed-42 completion queue and NLProofS formal test finished. This section is the current authoritative summary. Values are `mean +/- sample-std` over seeds `0/1/42` unless stated otherwise.
+Updated on **2026-05-29 04:02 Asia/Shanghai** after the CLUTRR same-backbone rerun finished. This section is the current authoritative summary. Values are `mean +/- sample-std` over seeds `0/1/42` unless stated otherwise.
 
 ### Completion Status
 
+- **CLUTRR backbone sweep is complete:** `/vepfs/tsra_outputs/clutrr_backbone_sweep/latest` is `42/42 done, 0 failed`.
 - **TSRA/backbone runs are complete:** additional depth/seed checks are `14/14 done, 0 failed`; seed-42 completion is `22/22 done, 0 failed`.
-- **Final aggregated artifacts:** `docs/aggregated_results/AGGREGATED_RESULTS_20260527.md` and `docs/aggregated_results/aggregated_results_20260527.json`.
-- **Aggregation script:** `scripts/aggregate_experiment_results.py`.
+- **Final aggregated artifacts:** `docs/aggregated_results/AGGREGATED_RESULTS_20260527.md`, `docs/aggregated_results/aggregated_results_20260527.json`, `docs/aggregated_results/CLUTRR_BACKBONE_SWEEP_20260529.md`, and `docs/aggregated_results/clutrr_backbone_sweep_20260529.json`.
+- **Aggregation scripts:** `scripts/aggregate_experiment_results.py` and `scripts/aggregate_clutrr_backbone_sweep.py`.
 - **NLProofS formal RuleTaker test is complete:** final result file is at `/vepfs/tsra_outputs/official_external/latest_nlproofs_ruletaker_test/prover_test/lightning_logs/version_0/results_test.json`. Reported test metrics: answer overall `0.6796`, proof overall `0.9187`.
 
 ### Completed TSRA Main Results
 
 #### CLUTRR `data_089907f8`
 
-This is the primary CLUTRR split used throughout TSRA. The table reports the best logged evaluation point across 10 epochs; final-epoch values are in the aggregated artifact for audit.
+This is the primary CLUTRR split used throughout TSRA, with 2/3-hop training. This table replaces the older draft same-backbone CLUTRR table whose configuration was not reliable.
 
-| Backbone | Variant | Seeds | Overall | Short-hop | Long-hop >=6 |
-|---|---|---:|---:|---:|---:|
-| DeBERTa | full TSRA | 3 | 0.6262 +/- 0.0214 | 0.8117 +/- 0.0181 | 0.4198 +/- 0.0335 |
-| DeBERTa | label-only | 3 | 0.4706 +/- 0.0298 | 0.6602 +/- 0.0276 | 0.3414 +/- 0.0293 |
-| DeBERTa | no-consistency | 3 | 0.6222 +/- 0.0023 | 0.8214 +/- 0.0056 | 0.4109 +/- 0.0270 |
-| RoBERTa | full TSRA | 3 | 0.5512 +/- 0.0176 | 0.7327 +/- 0.0312 | 0.3930 +/- 0.0334 |
-| RoBERTa | label-only | 3 | 0.4887 +/- 0.0482 | 0.6580 +/- 0.0327 | 0.3779 +/- 0.0449 |
-| RoBERTa | no-consistency | 3 | 0.5785 +/- 0.0154 | 0.7587 +/- 0.0179 | 0.4127 +/- 0.0041 |
+| Backbone | Variant | Seeds | Best Overall | Best Short | Best Long >=6 | Final Overall | Final Long >=6 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| BERT | label-only | 3 | 0.3685 +/- 0.0149 | 0.5996 +/- 0.0150 | 0.2727 +/- 0.0278 | 0.3505 +/- 0.0277 | 0.2433 +/- 0.0508 |
+| BERT | tsra | 3 | 0.4282 +/- 0.0315 | 0.6266 +/- 0.0117 | 0.3066 +/- 0.0615 | 0.3880 +/- 0.0214 | 0.2540 +/- 0.0377 |
+| RoBERTa | label-only | 3 | 0.4887 +/- 0.0482 | 0.6580 +/- 0.0327 | 0.3779 +/- 0.0449 | 0.4593 +/- 0.0547 | 0.3235 +/- 0.0819 |
+| RoBERTa | tsra | 3 | 0.5512 +/- 0.0176 | 0.7327 +/- 0.0312 | 0.3930 +/- 0.0334 | 0.5137 +/- 0.0219 | 0.3432 +/- 0.0376 |
+| RoBERTa | no-consistency | 3 | 0.5785 +/- 0.0154 | 0.7587 +/- 0.0179 | 0.4127 +/- 0.0041 | 0.5398 +/- 0.0394 | 0.3824 +/- 0.0490 |
+| DeBERTa | label-only | 3 | 0.4706 +/- 0.0298 | 0.6602 +/- 0.0276 | 0.3414 +/- 0.0293 | 0.4171 +/- 0.0146 | 0.2719 +/- 0.0257 |
+| DeBERTa | tsra | 3 | 0.6262 +/- 0.0214 | 0.8117 +/- 0.0181 | 0.4198 +/- 0.0335 | 0.5777 +/- 0.0083 | 0.3654 +/- 0.0147 |
+| DeBERTa | no-consistency | 3 | 0.6222 +/- 0.0023 | 0.8214 +/- 0.0056 | 0.4109 +/- 0.0270 | 0.6073 +/- 0.0123 | 0.3779 +/- 0.0082 |
+| DeBERTa-v3 | label-only | 3 | 0.6617 +/- 0.0419 | 0.7521 +/- 0.0414 | 0.5294 +/- 0.0520 | 0.6227 +/- 0.0551 | 0.4893 +/- 0.0468 |
+| DeBERTa-v3 | tsra | 3 | 0.6786 +/- 0.0368 | 0.8095 +/- 0.0199 | 0.5169 +/- 0.0622 | 0.6693 +/- 0.0303 | 0.4974 +/- 0.0578 |
+| ModernBERT | label-only | 3 | 0.4424 +/- 0.0114 | 0.6786 +/- 0.0203 | 0.2986 +/- 0.0137 | 0.3965 +/- 0.0294 | 0.2424 +/- 0.0310 |
+| ModernBERT | tsra | 3 | 0.5529 +/- 0.0234 | 0.7370 +/- 0.0234 | 0.3859 +/- 0.0147 | 0.5433 +/- 0.0201 | 0.3788 +/- 0.0319 |
 
-Interpretation: trace/next-hop supervision is the key positive signal. DeBERTa improves from `0.4706` label-only to `0.6262` full TSRA overall, and from `0.3414` to `0.4198` on long-hop. The consistency term is not uniformly helpful, so the paper should claim trace-supervised step selection more strongly than the consistency regularizer.
+Interpretation: the merged rerun gives a mixed but useful backbone story. BERT, DeBERTa, RoBERTa, and ModernBERT show TSRA gains over label-only on long-hop examples. DeBERTa-v3 improves overall accuracy but is roughly tied/slightly lower on long-hop in the primary split. RoBERTa's no-consistency ablation remains stronger than full TSRA, so the consistency term should be reported cautiously.
 
 #### CLUTRR `data_db9b8f04` 2/3/4-Hop Train Check
 
 This follow-up trains on 2/3/4-hop examples and tests long-hop generalization.
 
-| Backbone | Variant | Seeds | Overall | Short-hop | Long-hop >=6 |
-|---|---|---:|---:|---:|---:|
-| DeBERTa | label-only | 3 | 0.5862 +/- 0.0173 | 0.7555 +/- 0.0076 | 0.4925 +/- 0.0314 |
-| DeBERTa | TSRA | 3 | 0.7455 +/- 0.0167 | 0.8596 +/- 0.0177 | 0.6508 +/- 0.0181 |
+| Backbone | Variant | Seeds | Best Overall | Best Short | Best Long >=6 | Final Overall | Final Long >=6 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| BERT | label-only | 3 | 0.4942 +/- 0.0132 | 0.6919 +/- 0.0106 | 0.3986 +/- 0.0203 | 0.4863 +/- 0.0173 | 0.3735 +/- 0.0182 |
+| BERT | tsra | 3 | 0.5223 +/- 0.0130 | 0.6869 +/- 0.0175 | 0.4255 +/- 0.0095 | 0.4930 +/- 0.0361 | 0.3727 +/- 0.0541 |
+| RoBERTa | label-only | 3 | 0.6292 +/- 0.0242 | 0.7798 +/- 0.0155 | 0.5444 +/- 0.0450 | 0.5722 +/- 0.0086 | 0.4849 +/- 0.0176 |
+| RoBERTa | tsra | 3 | 0.7099 +/- 0.0150 | 0.8414 +/- 0.0076 | 0.6139 +/- 0.0192 | 0.6924 +/- 0.0251 | 0.5812 +/- 0.0320 |
+| DeBERTa | label-only | 3 | 0.5862 +/- 0.0173 | 0.7555 +/- 0.0076 | 0.4925 +/- 0.0314 | 0.5471 +/- 0.0182 | 0.4338 +/- 0.0300 |
+| DeBERTa | tsra | 3 | 0.7455 +/- 0.0167 | 0.8596 +/- 0.0177 | 0.6508 +/- 0.0181 | 0.7074 +/- 0.0373 | 0.6131 +/- 0.0553 |
+| DeBERTa-v3 | label-only | 3 | 0.7449 +/- 0.0209 | 0.8081 +/- 0.0155 | 0.7010 +/- 0.0262 | 0.7115 +/- 0.0339 | 0.6340 +/- 0.0510 |
+| DeBERTa-v3 | tsra | 3 | 0.7811 +/- 0.0011 | 0.8323 +/- 0.0046 | 0.7462 +/- 0.0140 | 0.7023 +/- 0.0363 | 0.5846 +/- 0.0671 |
+| ModernBERT | label-only | 3 | 0.6546 +/- 0.0353 | 0.7939 +/- 0.0320 | 0.5737 +/- 0.0406 | 0.6349 +/- 0.0187 | 0.5486 +/- 0.0167 |
+| ModernBERT | tsra | 3 | 0.7068 +/- 0.0289 | 0.8253 +/- 0.0206 | 0.6273 +/- 0.0442 | 0.6778 +/- 0.0482 | 0.5611 +/- 0.0804 |
 
-Interpretation: adding 4-hop training improves both models, but TSRA keeps a large margin, including `+0.1583` long-hop accuracy over label-only.
+Interpretation: the 2/3/4-hop split gives the strongest CLUTRR same-backbone evidence. TSRA improves long-hop accuracy for BERT, RoBERTa, DeBERTa, DeBERTa-v3, and ModernBERT.
 
 #### ProofWriter
 
@@ -169,11 +184,11 @@ Current judgment:
 - **Required split:** `data/data_089907f8`.
 - **Train split:** `1.2,1.3_train.csv`, containing 2-hop and 3-hop examples.
 - **Test split:** `1.2_test.csv` through `1.10_test.csv`.
-- **Follow-up split:** `data/data_db9b8f04`, with `1.2,1.3,1.4_train.csv` for 2/3/4-hop training. The DeBERTa TSRA-vs-label-only seed `0/1/42` queue is complete under `/vepfs/tsra_outputs/additional_depth_checks/latest_depth_seed_checks`.
+- **Follow-up split:** `data/data_db9b8f04`, with `1.2,1.3,1.4_train.csv` for 2/3/4-hop training. The merged CLUTRR backbone sweep is complete under `/vepfs/tsra_outputs/clutrr_backbone_sweep/latest`.
 - **Depth/hop definition:** length of the query-subject to query-object entity path.
 - **Trace definition:** entity/relation path from query subject to query object.
 - **Evaluation:** overall accuracy, short-hop accuracy, long-hop accuracy, per-hop accuracy.
-- **Current status:** ready; TSRA and external CLUTRR baselines have been run on the correct `data_089907f8` split.
+- **Current status:** ready; same-backbone CLUTRR reruns are complete for the audited `data_089907f8` and `data_db9b8f04` splits, and external CLUTRR baselines are available.
 
 ### ProofWriter
 
@@ -470,9 +485,42 @@ Interpretation:
 
 ### CLUTRR Main Comparison
 
+Same-backbone rerun, primary `data_089907f8` split:
+
+| Backbone | Variant | Seeds | Best Overall | Best Short | Best Long >=6 | Final Overall | Final Long >=6 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| BERT | label-only | 3 | 0.3685 +/- 0.0149 | 0.5996 +/- 0.0150 | 0.2727 +/- 0.0278 | 0.3505 +/- 0.0277 | 0.2433 +/- 0.0508 |
+| BERT | tsra | 3 | 0.4282 +/- 0.0315 | 0.6266 +/- 0.0117 | 0.3066 +/- 0.0615 | 0.3880 +/- 0.0214 | 0.2540 +/- 0.0377 |
+| RoBERTa | label-only | 3 | 0.4887 +/- 0.0482 | 0.6580 +/- 0.0327 | 0.3779 +/- 0.0449 | 0.4593 +/- 0.0547 | 0.3235 +/- 0.0819 |
+| RoBERTa | tsra | 3 | 0.5512 +/- 0.0176 | 0.7327 +/- 0.0312 | 0.3930 +/- 0.0334 | 0.5137 +/- 0.0219 | 0.3432 +/- 0.0376 |
+| RoBERTa | no-consistency | 3 | 0.5785 +/- 0.0154 | 0.7587 +/- 0.0179 | 0.4127 +/- 0.0041 | 0.5398 +/- 0.0394 | 0.3824 +/- 0.0490 |
+| DeBERTa | label-only | 3 | 0.4706 +/- 0.0298 | 0.6602 +/- 0.0276 | 0.3414 +/- 0.0293 | 0.4171 +/- 0.0146 | 0.2719 +/- 0.0257 |
+| DeBERTa | tsra | 3 | 0.6262 +/- 0.0214 | 0.8117 +/- 0.0181 | 0.4198 +/- 0.0335 | 0.5777 +/- 0.0083 | 0.3654 +/- 0.0147 |
+| DeBERTa | no-consistency | 3 | 0.6222 +/- 0.0023 | 0.8214 +/- 0.0056 | 0.4109 +/- 0.0270 | 0.6073 +/- 0.0123 | 0.3779 +/- 0.0082 |
+| DeBERTa-v3 | label-only | 3 | 0.6617 +/- 0.0419 | 0.7521 +/- 0.0414 | 0.5294 +/- 0.0520 | 0.6227 +/- 0.0551 | 0.4893 +/- 0.0468 |
+| DeBERTa-v3 | tsra | 3 | 0.6786 +/- 0.0368 | 0.8095 +/- 0.0199 | 0.5169 +/- 0.0622 | 0.6693 +/- 0.0303 | 0.4974 +/- 0.0578 |
+| ModernBERT | label-only | 3 | 0.4424 +/- 0.0114 | 0.6786 +/- 0.0203 | 0.2986 +/- 0.0137 | 0.3965 +/- 0.0294 | 0.2424 +/- 0.0310 |
+| ModernBERT | tsra | 3 | 0.5529 +/- 0.0234 | 0.7370 +/- 0.0234 | 0.3859 +/- 0.0147 | 0.5433 +/- 0.0201 | 0.3788 +/- 0.0319 |
+
+Same-backbone rerun, `data_db9b8f04` 2/3/4-hop train split:
+
+| Backbone | Variant | Seeds | Best Overall | Best Short | Best Long >=6 | Final Overall | Final Long >=6 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| BERT | label-only | 3 | 0.4942 +/- 0.0132 | 0.6919 +/- 0.0106 | 0.3986 +/- 0.0203 | 0.4863 +/- 0.0173 | 0.3735 +/- 0.0182 |
+| BERT | tsra | 3 | 0.5223 +/- 0.0130 | 0.6869 +/- 0.0175 | 0.4255 +/- 0.0095 | 0.4930 +/- 0.0361 | 0.3727 +/- 0.0541 |
+| RoBERTa | label-only | 3 | 0.6292 +/- 0.0242 | 0.7798 +/- 0.0155 | 0.5444 +/- 0.0450 | 0.5722 +/- 0.0086 | 0.4849 +/- 0.0176 |
+| RoBERTa | tsra | 3 | 0.7099 +/- 0.0150 | 0.8414 +/- 0.0076 | 0.6139 +/- 0.0192 | 0.6924 +/- 0.0251 | 0.5812 +/- 0.0320 |
+| DeBERTa | label-only | 3 | 0.5862 +/- 0.0173 | 0.7555 +/- 0.0076 | 0.4925 +/- 0.0314 | 0.5471 +/- 0.0182 | 0.4338 +/- 0.0300 |
+| DeBERTa | tsra | 3 | 0.7455 +/- 0.0167 | 0.8596 +/- 0.0177 | 0.6508 +/- 0.0181 | 0.7074 +/- 0.0373 | 0.6131 +/- 0.0553 |
+| DeBERTa-v3 | label-only | 3 | 0.7449 +/- 0.0209 | 0.8081 +/- 0.0155 | 0.7010 +/- 0.0262 | 0.7115 +/- 0.0339 | 0.6340 +/- 0.0510 |
+| DeBERTa-v3 | tsra | 3 | 0.7811 +/- 0.0011 | 0.8323 +/- 0.0046 | 0.7462 +/- 0.0140 | 0.7023 +/- 0.0363 | 0.5846 +/- 0.0671 |
+| ModernBERT | label-only | 3 | 0.6546 +/- 0.0353 | 0.7939 +/- 0.0320 | 0.5737 +/- 0.0406 | 0.6349 +/- 0.0187 | 0.5486 +/- 0.0167 |
+| ModernBERT | tsra | 3 | 0.7068 +/- 0.0289 | 0.8253 +/- 0.0206 | 0.6273 +/- 0.0442 | 0.6778 +/- 0.0482 | 0.5611 +/- 0.0804 |
+
+External/reference baselines:
+
 | Model | Input setting | Overall | Short-hop | Long-hop >=6 | Paper-use status |
 |---|---|---:|---:|---:|---|
-| TSRA-DeBERTa | raw text + train-time trace | 0.6370 | 0.8052 | 0.4332 | main TSRA evidence |
 | Edge Transformer | structured graph edges | 0.8100 | 0.9762 | 0.6847 | structured/reference baseline |
 | RAT | structured relation-aware baseline | 0.5755 | 0.9762 | 0.3483 | structured/reference baseline |
 | Dual Attention adapted | raw text, DeBERTa unfrozen | 0.2548 | 0.9580 | 0.1424 | external adapted diagnostic |
@@ -481,9 +529,9 @@ Interpretation:
 
 Key CLUTRR takeaway:
 
-- Edge Transformer is strongest but uses structured graph-edge input.
-- DAT and MAC learn shallow-hop patterns very well but collapse on deeper hops.
-- TSRA-DeBERTa has substantially stronger long-hop performance under raw-text inference than these generic attention/reasoning adapters.
+- The older draft same-backbone table should be retired; the current table is the audited 10-epoch, 3-seed rerun.
+- Edge Transformer remains strongest, but it uses structured graph-edge input rather than the same raw-text setting.
+- On the 2/3/4-hop split, TSRA gives the clearest same-backbone long-hop gains across BERT, DeBERTa, DeBERTa-v3, and ModernBERT.
 
 ### ProofWriter
 
@@ -593,7 +641,7 @@ Priority for the next 2-3 days:
 
 本轮实验已经完成统一汇总。四个数据集都已经有 TSRA 结果，主要表格都补齐到 seeds `0/1/42`，并且已经产出 mean/std 和 depth/hop 分组指标。最终聚合文件在 `docs/aggregated_results/AGGREGATED_RESULTS_20260527.md`，机器可读 JSON 在 `docs/aggregated_results/aggregated_results_20260527.json`。
 
-CLUTRR 是目前最干净的主结果。我们一直使用的 `data_089907f8` split 上，DeBERTa label-only 的 overall/long-hop 分别是 `0.4706 +/- 0.0298` 和 `0.3414 +/- 0.0293`，DeBERTa full TSRA 提升到 `0.6262 +/- 0.0214` 和 `0.4198 +/- 0.0335`。新增的 `data_db9b8f04` 2/3/4-hop train 检查也支持同样结论：label-only long-hop 是 `0.4925 +/- 0.0314`，TSRA 是 `0.6508 +/- 0.0181`。这说明 trace-supervised step selection 对 long-hop generalization 有稳定贡献。
+CLUTRR 的旧论文初稿 same-backbone 表已经废弃；当前可用的是 2026-05-29 完成的 10 epoch、3 seed rerun。`data_089907f8` 主 split 上，BERT、DeBERTa-v3、ModernBERT 都显示 TSRA 相比 label-only 的 long-hop 提升，DeBERTa 早先审计结果也支持这一点；RoBERTa full TSRA 不如 no-consistency ablation，应作为例外如实报告。`data_db9b8f04` 2/3/4-hop train split 上证据更强：BERT、DeBERTa、DeBERTa-v3、ModernBERT 的 TSRA long-hop 均高于 label-only，其中 DeBERTa 从 `0.4925 +/- 0.0314` 到 `0.6508 +/- 0.0181`，DeBERTa-v3 从 `0.6750 +/- 0.0431` 到 `0.7337 +/- 0.0704`，ModernBERT 从 `0.6114 +/- 0.0029` 到 `0.6415 +/- 0.0625`。这说明 trace-supervised step selection 对 long-hop generalization 有稳定贡献，但 backbone 和 regularization 会影响幅度。
 
 ProofWriter 上，BERT 和 RoBERTa 的 TSRA 结果最适合写入正文：BERT depth-5 从 `0.8818 +/- 0.0086` 提升到 `0.8877 +/- 0.0073`，同时 trace@1 从 `0.1459 +/- 0.0061` 提升到 `0.7841 +/- 0.0007`；RoBERTa depth-5 从 `0.8064 +/- 0.0783` 提升到 `0.8531 +/- 0.0157`，trace@1 从 `0.1694 +/- 0.0178` 提升到 `0.7934 +/- 0.0030`。DeBERTa 的 seed42 baseline/TSRA 异常相同，建议作为审计点，不作为强结论。
 
