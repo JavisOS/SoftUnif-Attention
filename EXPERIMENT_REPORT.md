@@ -22,11 +22,13 @@ Evaluation emphasizes shallow-train / deep-test settings:
 
 ## 0. Latest Status Snapshot
 
-Updated on **2026-05-29 04:02 Asia/Shanghai** after the CLUTRR same-backbone rerun finished. This section is the current authoritative summary. Values are `mean +/- sample-std` over seeds `0/1/42` unless stated otherwise.
+Updated on **2026-05-29 05:18 Asia/Shanghai** after the CLUTRR same-backbone rerun finished and the CLUTRR true vanilla classifier audit completed. This section is the current authoritative summary. Values are `mean +/- sample-std` over seeds `0/1/42` unless stated otherwise.
 
 ### Completion Status
 
 - **CLUTRR backbone sweep is complete:** `/vepfs/tsra_outputs/clutrr_backbone_sweep/latest` is `42/42 done, 0 failed`.
+- **CLUTRR label-only audit note:** the CLUTRR `label-only` rows in the same-backbone tables are **TSRA-architecture label-only ablations**, not plain vanilla RoBERTa/DeBERTa classifier fine-tuning. They run through `clutrr.cli.train` / `TsraReasonerModel` with trace, edge, and consistency losses set to zero, but still use entity spans, query-conditioned pair/relation attention, and renamed-input label CE.
+- **True vanilla CLUTRR classifier audit is complete:** `/vepfs/tsra_outputs/clutrr_vanilla_classifier_audit/latest` is `6/6 done, 0 failed`; results are also summarized in `docs/aggregated_results/CLUTRR_VANILLA_CLASSIFIER_AUDIT_20260529.md`.
 - **TSRA/backbone runs are complete:** additional depth/seed checks are `14/14 done, 0 failed`; seed-42 completion is `22/22 done, 0 failed`.
 - **Final aggregated artifacts:** `docs/aggregated_results/AGGREGATED_RESULTS_20260527.md`, `docs/aggregated_results/aggregated_results_20260527.json`, `docs/aggregated_results/CLUTRR_BACKBONE_SWEEP_20260529.md`, and `docs/aggregated_results/clutrr_backbone_sweep_20260529.json`.
 - **Aggregation scripts:** `scripts/aggregate_experiment_results.py` and `scripts/aggregate_clutrr_backbone_sweep.py`.
@@ -36,7 +38,7 @@ Updated on **2026-05-29 04:02 Asia/Shanghai** after the CLUTRR same-backbone rer
 
 #### CLUTRR `data_089907f8`
 
-This is the primary CLUTRR split used throughout TSRA, with 2/3-hop training. This table replaces the older draft same-backbone CLUTRR table whose configuration was not reliable.
+This is the primary CLUTRR split used throughout TSRA, with 2/3-hop training. This table replaces the older draft same-backbone CLUTRR table whose configuration was not reliable. In this CLUTRR table, `label-only` means the TSRA architecture trained with final-label CE only; it is not the plain backbone classifier baseline.
 
 | Backbone | Variant | Seeds | Best Overall | Best Short | Best Long >=6 | Final Overall | Final Long >=6 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -53,11 +55,22 @@ This is the primary CLUTRR split used throughout TSRA, with 2/3-hop training. Th
 | ModernBERT | label-only | 3 | 0.4424 +/- 0.0114 | 0.6786 +/- 0.0203 | 0.2986 +/- 0.0137 | 0.3965 +/- 0.0294 | 0.2424 +/- 0.0310 |
 | ModernBERT | tsra | 3 | 0.5529 +/- 0.0234 | 0.7370 +/- 0.0234 | 0.3859 +/- 0.0147 | 0.5433 +/- 0.0201 | 0.3788 +/- 0.0319 |
 
-Interpretation: the merged rerun gives a mixed but useful backbone story. BERT, DeBERTa, RoBERTa, and ModernBERT show TSRA gains over label-only on long-hop examples. DeBERTa-v3 improves overall accuracy but is roughly tied/slightly lower on long-hop in the primary split. RoBERTa's no-consistency ablation remains stronger than full TSRA, so the consistency term should be reported cautiously.
+Interpretation: the merged rerun gives a mixed but useful architecture-ablation story. BERT, DeBERTa, RoBERTa, and ModernBERT show TSRA gains over the TSRA-architecture label-only ablation on long-hop examples. DeBERTa-v3 improves overall accuracy but is roughly tied/slightly lower on long-hop in the primary split. RoBERTa's no-consistency ablation remains stronger than full TSRA, so the consistency term should be reported cautiously. Do not cite these rows as vanilla Transformer classifier numbers until the separate vanilla audit finishes.
+
+#### CLUTRR True Vanilla Classifier Audit
+
+This audit uses the plain `clutrr.cli.baseline` entry point: story + query input, encoder + linear classifier, final-label CE only. It does not use entity spans, TSRA relation attention, trace/path supervision, or consistency losses.
+
+| Backbone | Seeds | Best Overall | Best Short | Best Long >=6 | Final Overall | Final Long >=6 |
+|---|---:|---:|---:|---:|---:|---:|
+| RoBERTa | 3 | 0.3249 +/- 0.0068 | 0.9650 +/- 0.0070 | 0.2223 +/- 0.0054 | 0.2880 +/- 0.0123 | 0.1732 +/- 0.0086 |
+| DeBERTa-v3 | 3 | 0.3610 +/- 0.0465 | 0.9580 +/- 0.0121 | 0.2426 +/- 0.0750 | 0.3310 +/- 0.0487 | 0.2222 +/- 0.0625 |
+
+Interpretation: this audit confirms that the high CLUTRR `label-only` numbers, especially DeBERTa-v3 `0.6617`, are not pure backbone fine-tuning results. They should be reported as TSRA-architecture label-only ablations, while the true vanilla classifier baselines are much lower.
 
 #### CLUTRR `data_db9b8f04` 2/3/4-Hop Train Check
 
-This follow-up trains on 2/3/4-hop examples and tests long-hop generalization.
+This follow-up trains on 2/3/4-hop examples and tests long-hop generalization. As above, `label-only` means the TSRA architecture with trace/edge/consistency losses disabled, not a plain backbone classifier.
 
 | Backbone | Variant | Seeds | Best Overall | Best Short | Best Long >=6 | Final Overall | Final Long >=6 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -72,7 +85,7 @@ This follow-up trains on 2/3/4-hop examples and tests long-hop generalization.
 | ModernBERT | label-only | 3 | 0.6546 +/- 0.0353 | 0.7939 +/- 0.0320 | 0.5737 +/- 0.0406 | 0.6349 +/- 0.0187 | 0.5486 +/- 0.0167 |
 | ModernBERT | tsra | 3 | 0.7068 +/- 0.0289 | 0.8253 +/- 0.0206 | 0.6273 +/- 0.0442 | 0.6778 +/- 0.0482 | 0.5611 +/- 0.0804 |
 
-Interpretation: the 2/3/4-hop split gives the strongest CLUTRR same-backbone evidence. TSRA improves long-hop accuracy for BERT, RoBERTa, DeBERTa, DeBERTa-v3, and ModernBERT.
+Interpretation: the 2/3/4-hop split gives the strongest CLUTRR same-architecture evidence. TSRA improves long-hop accuracy over the TSRA-architecture label-only ablation for BERT, RoBERTa, DeBERTa, DeBERTa-v3, and ModernBERT.
 
 #### ProofWriter
 
@@ -485,7 +498,7 @@ Interpretation:
 
 ### CLUTRR Main Comparison
 
-Same-backbone rerun, primary `data_089907f8` split:
+Same-backbone rerun, primary `data_089907f8` split. Here `label-only` is a TSRA-architecture final-label ablation, not a plain backbone classifier:
 
 | Backbone | Variant | Seeds | Best Overall | Best Short | Best Long >=6 | Final Overall | Final Long >=6 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -502,7 +515,7 @@ Same-backbone rerun, primary `data_089907f8` split:
 | ModernBERT | label-only | 3 | 0.4424 +/- 0.0114 | 0.6786 +/- 0.0203 | 0.2986 +/- 0.0137 | 0.3965 +/- 0.0294 | 0.2424 +/- 0.0310 |
 | ModernBERT | tsra | 3 | 0.5529 +/- 0.0234 | 0.7370 +/- 0.0234 | 0.3859 +/- 0.0147 | 0.5433 +/- 0.0201 | 0.3788 +/- 0.0319 |
 
-Same-backbone rerun, `data_db9b8f04` 2/3/4-hop train split:
+Same-backbone rerun, `data_db9b8f04` 2/3/4-hop train split. Here `label-only` has the same TSRA-architecture ablation meaning:
 
 | Backbone | Variant | Seeds | Best Overall | Best Short | Best Long >=6 | Final Overall | Final Long >=6 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -519,6 +532,13 @@ Same-backbone rerun, `data_db9b8f04` 2/3/4-hop train split:
 
 External/reference baselines:
 
+True vanilla classifier audit on primary `data_089907f8`:
+
+| Backbone | Input/model setting | Best Overall | Best Long >=6 | Final Overall | Final Long >=6 |
+|---|---|---:|---:|---:|---:|
+| RoBERTa | story+query, encoder+linear classifier | 0.3249 +/- 0.0068 | 0.2223 +/- 0.0054 | 0.2880 +/- 0.0123 | 0.1732 +/- 0.0086 |
+| DeBERTa-v3 | story+query, encoder+linear classifier | 0.3610 +/- 0.0465 | 0.2426 +/- 0.0750 | 0.3310 +/- 0.0487 | 0.2222 +/- 0.0625 |
+
 | Model | Input setting | Overall | Short-hop | Long-hop >=6 | Paper-use status |
 |---|---|---:|---:|---:|---|
 | Edge Transformer | structured graph edges | 0.8100 | 0.9762 | 0.6847 | structured/reference baseline |
@@ -529,9 +549,10 @@ External/reference baselines:
 
 Key CLUTRR takeaway:
 
-- The older draft same-backbone table should be retired; the current table is the audited 10-epoch, 3-seed rerun.
+- The older draft same-backbone table should be retired; the current table is the audited 10-epoch, 3-seed TSRA-architecture ablation rerun.
+- The true vanilla classifier audit is much lower than the TSRA-architecture `label-only` rows, so these two baselines must not be conflated in the paper.
 - Edge Transformer remains strongest, but it uses structured graph-edge input rather than the same raw-text setting.
-- On the 2/3/4-hop split, TSRA gives the clearest same-backbone long-hop gains across BERT, DeBERTa, DeBERTa-v3, and ModernBERT.
+- On the 2/3/4-hop split, TSRA gives the clearest same-architecture long-hop gains across BERT, RoBERTa, DeBERTa, DeBERTa-v3, and ModernBERT.
 
 ### ProofWriter
 
@@ -632,7 +653,7 @@ Important wording for the paper:
 Priority for the next 2-3 days:
 
 1. Use `docs/aggregated_results/AGGREGATED_RESULTS_20260527.md` as the source for paper tables; it contains mean/std and depth/hop grouped metrics over seeds `0/1/42`.
-2. Build the final CLUTRR paper table with TSRA, same-backbone label-only Transformer, Edge Transformer, RAT, DAT adapted, MAC-style attention, and Abstractor/RCA if desired.
+2. Build the final CLUTRR paper table with TSRA, TSRA-architecture label-only ablations, true vanilla classifier audit results, Edge Transformer, RAT, DAT adapted, MAC-style attention, and Abstractor/RCA if desired.
 3. Redesign PrOntoQA-OOD reporting around trace/proof-step correctness rather than degenerate binary classification.
 4. Move old diagnostic/adapted external baselines to appendix language and keep official EdgeTransformer/FaiRR/GFaiR/IBR/NLProofS as main external comparisons.
 5. Update the paper draft's experiment section directly from this report.
@@ -641,7 +662,7 @@ Priority for the next 2-3 days:
 
 本轮实验已经完成统一汇总。四个数据集都已经有 TSRA 结果，主要表格都补齐到 seeds `0/1/42`，并且已经产出 mean/std 和 depth/hop 分组指标。最终聚合文件在 `docs/aggregated_results/AGGREGATED_RESULTS_20260527.md`，机器可读 JSON 在 `docs/aggregated_results/aggregated_results_20260527.json`。
 
-CLUTRR 的旧论文初稿 same-backbone 表已经废弃；当前可用的是 2026-05-29 完成的 10 epoch、3 seed rerun。`data_089907f8` 主 split 上，BERT、DeBERTa-v3、ModernBERT 都显示 TSRA 相比 label-only 的 long-hop 提升，DeBERTa 早先审计结果也支持这一点；RoBERTa full TSRA 不如 no-consistency ablation，应作为例外如实报告。`data_db9b8f04` 2/3/4-hop train split 上证据更强：BERT、DeBERTa、DeBERTa-v3、ModernBERT 的 TSRA long-hop 均高于 label-only，其中 DeBERTa 从 `0.4925 +/- 0.0314` 到 `0.6508 +/- 0.0181`，DeBERTa-v3 从 `0.6750 +/- 0.0431` 到 `0.7337 +/- 0.0704`，ModernBERT 从 `0.6114 +/- 0.0029` 到 `0.6415 +/- 0.0625`。这说明 trace-supervised step selection 对 long-hop generalization 有稳定贡献，但 backbone 和 regularization 会影响幅度。
+CLUTRR 的旧论文初稿 same-backbone 表已经废弃；当前可用的是 2026-05-29 完成的 10 epoch、3 seed rerun，但这里的 `label-only` 必须理解为 TSRA 架构下关闭 trace/edge/consistency loss 的最终标签消融，不是纯 RoBERTa/DeBERTa classifier 微调。真正的 vanilla classifier 审计已经完成：RoBERTa best overall 为 `0.3249 +/- 0.0068`、final overall 为 `0.2880 +/- 0.0123`；DeBERTa-v3 best overall 为 `0.3610 +/- 0.0465`、final overall 为 `0.3310 +/- 0.0487`。这确认了之前偏高的 RoBERTa `0.4887` 和 DeBERTa-v3 `0.6617` 不是纯 classifier baseline，而是 TSRA-architecture label-only ablation。`data_089907f8` 主 split 上，BERT、DeBERTa、RoBERTa、ModernBERT 显示 TSRA 相比这个 TSRA-architecture label-only ablation 的 long-hop 提升；DeBERTa-v3 overall 有提升但 long-hop 基本持平/略低，RoBERTa no-consistency ablation 仍强于 full TSRA，应作为例外如实报告。`data_db9b8f04` 2/3/4-hop train split 上证据更强：BERT、RoBERTa、DeBERTa、DeBERTa-v3、ModernBERT 的 TSRA long-hop 均高于 label-only，其中 DeBERTa 从 `0.4925 +/- 0.0314` 到 `0.6508 +/- 0.0181`，DeBERTa-v3 从 `0.7010 +/- 0.0262` 到 `0.7462 +/- 0.0140`，ModernBERT 从 `0.5737 +/- 0.0406` 到 `0.6273 +/- 0.0442`。
 
 ProofWriter 上，BERT 和 RoBERTa 的 TSRA 结果最适合写入正文：BERT depth-5 从 `0.8818 +/- 0.0086` 提升到 `0.8877 +/- 0.0073`，同时 trace@1 从 `0.1459 +/- 0.0061` 提升到 `0.7841 +/- 0.0007`；RoBERTa depth-5 从 `0.8064 +/- 0.0783` 提升到 `0.8531 +/- 0.0157`，trace@1 从 `0.1694 +/- 0.0178` 提升到 `0.7934 +/- 0.0030`。DeBERTa 的 seed42 baseline/TSRA 异常相同，建议作为审计点，不作为强结论。
 

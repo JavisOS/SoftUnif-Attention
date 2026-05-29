@@ -6,6 +6,8 @@ Completion: `42/42 done`, `0 failed`.
 
 Values are `mean +/- sample-std` over seeds `0/1/42`. `Best` uses the best logged evaluation point by overall accuracy across 10 epochs; `Final` is epoch 10.
 
+Important audit note: `label-only` in these CLUTRR tables means a TSRA-architecture label-only ablation. Trace, edge, and consistency losses are set to zero, but the run still uses `clutrr.cli.train` / `TsraReasonerModel` with entity spans, query-conditioned pair/relation attention, and renamed-input label CE. It is not the plain vanilla backbone classifier. A separate vanilla classifier audit completed under `/vepfs/tsra_outputs/clutrr_vanilla_classifier_audit/latest`; see `CLUTRR_VANILLA_CLASSIFIER_AUDIT_20260529.md`.
+
 ## data_089907f8
 
 | Backbone | Variant | Seeds | Best Overall | Best Short | Best Long >=6 | Final Overall | Final Long >=6 |
@@ -42,5 +44,6 @@ Values are `mean +/- sample-std` over seeds `0/1/42`. `Best` uses the best logge
 
 - This file merges the newly completed CLUTRR backbone sweep with the previously audited DeBERTa/RoBERTa CLUTRR rows from `AGGREGATED_RESULTS_20260527.md`.
 - The merged tables replace the older CLUTRR same-backbone table from the draft, whose configuration was not reliable.
+- `label-only` is an architecture ablation, not a pure Transformer classifier baseline; use `CLUTRR_VANILLA_CLASSIFIER_AUDIT_20260529.md` for plain RoBERTa/DeBERTa-v3 classifier numbers.
 - `data_089907f8` is the primary TSRA CLUTRR split with 2/3-hop training.
 - `data_db9b8f04` is the follow-up 2/3/4-hop training split.
