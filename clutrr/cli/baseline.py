@@ -244,7 +244,16 @@ def evaluate(model, loader):
     long_correct = sum(hop_correct.get(h, 0) for h in range(6, 20))
     long_total = sum(hop_total.get(h, 0) for h in range(6, 20))
     long_acc = long_correct / long_total if long_total > 0 else 0.0
-    return overall_acc, short_acc, long_acc
+    per_hop = {}
+    for hop in sorted(hop_total):
+        total_for_hop = hop_total[hop]
+        correct_for_hop = hop_correct.get(hop, 0)
+        per_hop[int(hop)] = {
+            "accuracy": correct_for_hop / total_for_hop if total_for_hop > 0 else 0.0,
+            "correct": int(correct_for_hop),
+            "total": int(total_for_hop),
+        }
+    return overall_acc, short_acc, long_acc, per_hop
 
 
 def build_arg_parser(defaults=None):
@@ -258,7 +267,25 @@ def build_arg_parser(defaults=None):
         "--model_type",
         type=str,
         default=defaults["model_type"],
-        choices=["bert", "roberta", "roberta-large", "deberta", "deberta-v3", "deberta-v3-large", "modernbert", "qwen2.5-7b"],
+        choices=[
+            "bert",
+            "roberta",
+            "roberta-large",
+            "deberta",
+            "deberta-v3",
+            "deberta-v3-large",
+            "modernbert",
+            "gpt2",
+            "llama3.2-1b",
+            "llama3.2-3b",
+            "qwen2.5-7b",
+            "qwen3-0.6b",
+            "qwen3-0.6b-base",
+            "qwen3-1.7b",
+            "qwen3-1.7b-base",
+            "qwen3-8b",
+            "qwen3-8b-base",
+        ],
         help="Backbone model.",
     )
     parser.add_argument(
@@ -379,10 +406,19 @@ def run():
             pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
         print(f"Epoch {epoch + 1}: Loss = {total_loss / len(train_loader):.4f}")
-        overall, short_h, long_h = evaluate(model, test_loader)
+        overall, short_h, long_h, per_hop = evaluate(model, test_loader)
         print(f"  Overall Acc (Base): {overall:.4f}")
         print(f"  Short Hop (2-3):    {short_h:.4f}")
         print(f"  Long Hop (>=6):     {long_h:.4f}")
+        if per_hop:
+            parts = []
+            for hop in sorted(per_hop):
+                item = per_hop[hop]
+                parts.append(
+                    f"{hop}={item['accuracy']:.4f} "
+                    f"({item['correct']}/{item['total']})"
+                )
+            print(f"  Per-Hop Acc:        {', '.join(parts)}")
 
 
 if __name__ == "__main__":

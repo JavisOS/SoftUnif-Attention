@@ -18,7 +18,16 @@ from transformers import (
 
 
 DECODER_ONLY_MODEL_IDS = {
+    "gpt2": "openai-community/gpt2",
     "qwen2.5-7b": "Qwen/Qwen2.5-7B",
+    "qwen3-0.6b": "Qwen/Qwen3-0.6B",
+    "qwen3-0.6b-base": "Qwen/Qwen3-0.6B-Base",
+    "qwen3-1.7b": "Qwen/Qwen3-1.7B",
+    "qwen3-1.7b-base": "Qwen/Qwen3-1.7B-Base",
+    "qwen3-8b": "Qwen/Qwen3-8B",
+    "qwen3-8b-base": "Qwen/Qwen3-8B-Base",
+    "llama3.2-1b": "meta-llama/Llama-3.2-1B",
+    "llama3.2-3b": "meta-llama/Llama-3.2-3B",
 }
 
 
@@ -75,7 +84,7 @@ def build_tokenizer(model_type: str, model_name_or_path: str | None = None):
         except TypeError:
             return AutoTokenizer.from_pretrained("answerdotai/ModernBERT-base", use_fast=True)
     if model_type in DECODER_ONLY_MODEL_IDS:
-        tok = AutoTokenizer.from_pretrained(DECODER_ONLY_MODEL_IDS[model_type], use_fast=True)
+        tok = AutoTokenizer.from_pretrained(DECODER_ONLY_MODEL_IDS[model_type], use_fast=True, trust_remote_code=True)
         if tok.pad_token is None and tok.eos_token is not None:
             tok.pad_token = tok.eos_token
         return tok
@@ -139,6 +148,7 @@ def build_backbone_model(
                 bnb_4bit_quant_type="nf4",
             )
             model_kwargs["device_map"] = "auto"
+        model_kwargs["trust_remote_code"] = True
         model = AutoModel.from_pretrained(DECODER_ONLY_MODEL_IDS[model_type], **model_kwargs)
         return _maybe_enable_lora(
             model,

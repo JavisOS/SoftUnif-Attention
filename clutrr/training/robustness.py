@@ -111,6 +111,16 @@ def evaluate_robustness(model, loader, device):
     long_tot = sum([by_hop_total.get(h, 0) for h in range(6, 15)])
     long_acc = long_corr / long_tot if long_tot > 0 else 0
 
+    per_hop = {}
+    for hop in sorted(by_hop_total):
+        hop_total = by_hop_total[hop]
+        hop_correct = by_hop_correct.get(hop, 0)
+        per_hop[int(hop)] = {
+            "accuracy": hop_correct / hop_total if hop_total > 0 else 0,
+            "correct": int(hop_correct),
+            "total": int(hop_total),
+        }
+
     print(f"[Stats] Evaluated {total} samples.")
     print(f"  Changed Story Rate:   {changed_story_rate:.4f}")
     print(f"  Changed Query Rate:   {changed_query_rate:.4f}")
@@ -122,4 +132,5 @@ def evaluate_robustness(model, loader, device):
         "consistent_and_correct": prob_robust_correct,
         "short_hop": short_acc,
         "long_hop": long_acc,
+        "per_hop": per_hop,
     }
