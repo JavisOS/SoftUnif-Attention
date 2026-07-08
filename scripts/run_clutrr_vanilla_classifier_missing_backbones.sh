@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /root/TSRA
+cd /root/TRUA
 
 RUN_ROOT="/vepfs/tsra_outputs/clutrr_vanilla_classifier_missing_backbones/clutrr_vanilla_classifier_missing_backbones_$(date +%Y%m%d_%H%M%S)"
 QUEUE="$RUN_ROOT/queue.tsv"
 STATUS_DIR="$RUN_ROOT/status"
 LOG_DIR="$RUN_ROOT/logs"
-GPUS="${TSRA_VANILLA_MISSING_GPUS:-0,1}"
-GPU_MEM_THRESHOLD_MB="${TSRA_GPU_MEM_THRESHOLD_MB:-1000}"
+GPUS="${TRUA_VANILLA_MISSING_GPUS:-0,1}"
+GPU_MEM_THRESHOLD_MB="${TRUA_GPU_MEM_THRESHOLD_MB:-1000}"
 
 mkdir -p "$STATUS_DIR" "$LOG_DIR"
 ln -sfn "$RUN_ROOT" /vepfs/tsra_outputs/clutrr_vanilla_classifier_missing_backbones/latest
@@ -71,7 +71,7 @@ run_task() {
     echo "epochs=$epochs"
     echo "gpu=$gpu"
     echo "objective=vanilla_final_label_ce_only"
-    echo "uses_tsra_architecture=false"
+    echo "uses_trua_architecture=false"
     echo "uses_entity_spans=false"
     echo "uses_trace_loss=false"
     echo "uses_consistency_loss=false"

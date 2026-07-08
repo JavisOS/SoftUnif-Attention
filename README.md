@@ -1,8 +1,8 @@
-# SoftUnif-Attention (TSRA Research Codebase)
+# SoftUnif-Attention (TRUA Research Codebase)
 
 This repository is organized with a layered scaffold (`config / data / models / training / utils`) per dataset package:
 
-- `clutrr/`: TSRA on CLUTRR (your method).
+- `clutrr/`: TRUA on CLUTRR (your method).
 - `ruletaker/`: RuleTaker pipeline.
 - `comparison/other_paper_method/code/`: prior-paper code kept only for comparison.
 
@@ -15,12 +15,12 @@ clutrr/
     relation_schema.py
   data/
     clutrr_dataset.py
-    tsra_dataset.py
-    tsra_collator.py
+    trua_dataset.py
+    trua_collator.py
   models/
     backbones.py
     relation_attention.py
-    tsra_model.py
+    trua_model.py
   training/
     robustness.py
   utils/
@@ -66,12 +66,12 @@ comparison/
 
 Example with YAML config:
 
-- `python -m clutrr.cli.train --config configs/clutrr/train_tsra.yaml`
+- `python -m clutrr.cli.train --config configs/clutrr/train_trua.yaml`
 - `python -m clutrr.cli.baseline --config configs/clutrr/train_baseline.yaml`
 - `python -m ruletaker.cli.train --config configs/ruletaker/train.yaml`
 - `python -m ruletaker.cli.baseline --config configs/ruletaker/train_baseline.yaml`
 - `python -m clutrr.cli.eval_gemini_openai --config configs/clutrr/eval_gemini_openai.yaml`
-- CLI args still override YAML, e.g. `python -m clutrr.cli.train --config configs/clutrr/train_tsra.yaml --epochs 30`
+- CLI args still override YAML, e.g. `python -m clutrr.cli.train --config configs/clutrr/train_trua.yaml --epochs 30`
 
 ## Notes
 
@@ -79,23 +79,23 @@ Example with YAML config:
 - No root-level compatibility launchers are required; use module entrypoints above.
 
 
-## CLUTRR TSRA Lines
+## CLUTRR TRUA Lines
 
-The reproducible DeBERTa TSRA baseline is configured in `configs/clutrr/train_tsra.yaml`. The sparse latent relation transition algebra experiment is configured in `configs/clutrr/train_tsra_sparse.yaml`.
+The reproducible DeBERTa TRUA baseline is configured in `configs/clutrr/train_trua.yaml`. The sparse latent relation transition algebra experiment is configured in `configs/clutrr/train_trua_sparse.yaml`.
 
 Run the baseline:
 
-    python -m clutrr.cli.train --config configs/clutrr/train_tsra.yaml
+    python -m clutrr.cli.train --config configs/clutrr/train_trua.yaml
 
 Run the sparse algebraic reasoner:
 
-    python -m clutrr.cli.train --config configs/clutrr/train_tsra_sparse.yaml
+    python -m clutrr.cli.train --config configs/clutrr/train_trua_sparse.yaml
 
 Useful sparse-reasoner ablation switches are exposed directly by `clutrr.cli.train`:
 
-    python -m clutrr.cli.train --config configs/clutrr/train_tsra_sparse.yaml --no-use_path_algebra
-    python -m clutrr.cli.train --config configs/clutrr/train_tsra_sparse.yaml --lambda_alg 0 --lambda_eq 0
-    python -m clutrr.cli.train --config configs/clutrr/train_tsra_sparse.yaml --relation_score_mode mlp
-    python -m clutrr.cli.train --config configs/clutrr/train_tsra_sparse.yaml --sparse_top_k 0
+    python -m clutrr.cli.train --config configs/clutrr/train_trua_sparse.yaml --no-use_path_algebra
+    python -m clutrr.cli.train --config configs/clutrr/train_trua_sparse.yaml --lambda_alg 0 --lambda_eq 0
+    python -m clutrr.cli.train --config configs/clutrr/train_trua_sparse.yaml --relation_score_mode mlp
+    python -m clutrr.cli.train --config configs/clutrr/train_trua_sparse.yaml --sparse_top_k 0
 
 Large generated artifacts are intentionally not versioned. Experiment logs and checkpoints should live under outputs/, and local datasets/environments under data/ or .conda/.

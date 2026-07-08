@@ -4,7 +4,7 @@ from clutrr.config.relation_schema import RELATION_ID_MAP_21_WITH_NOTHING as rel
 from clutrr.models.backbones import is_decoder_only_model
 
 
-class TsraBatchCollator:
+class TruaBatchCollator:
     def __init__(self, tokenizer, device=None, model_type="roberta"):
         self.tokenizer = tokenizer
         self.model_type = model_type
@@ -12,7 +12,14 @@ class TsraBatchCollator:
 
     @staticmethod
     def _format_decoder_input(story, query_a, query_b):
-        return f"Story: {story}\nQuestion: What is the relation between {query_a} and {query_b}?"
+        # Keep the raw story at character position 0 so token spans aligned on
+        # the story alone remain valid after appending the directed query.
+        return (
+            f"{story}\n"
+            f"Query subject: {query_a}\n"
+            f"Query object: {query_b}\n"
+            f"Question: What is the family relation from {query_a} to {query_b}?"
+        )
 
     def __call__(self, batch):
         if not batch:

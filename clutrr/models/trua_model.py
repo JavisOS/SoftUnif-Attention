@@ -4,9 +4,10 @@ import torch.nn as nn
 from clutrr.models.backbones import build_backbone_model, is_decoder_only_model
 from clutrr.config.relation_schema import RELATION_ID_MAP_21_WITH_NOTHING as relation_id_map
 from clutrr.models.relation_attention import RelationConditionedEntityAttention
+from clutrr.models.trua_core import ENTITY_PATH_ADAPTER, TransitionRegularizedUnitAttentionCore
 
 
-class TsraReasonerModel(nn.Module):
+class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
     def __init__(
         self,
         device,
@@ -36,6 +37,7 @@ class TsraReasonerModel(nn.Module):
     ):
         super().__init__()
         self.device = device
+        self.adapter_spec = ENTITY_PATH_ADAPTER
         self.force_gold_edges = force_gold_edges
         self.use_path_algebra = use_path_algebra
         self.path_algebra_steps = path_algebra_steps
@@ -117,78 +119,6 @@ class TsraReasonerModel(nn.Module):
         self.mention_key_proj = nn.Linear(self.hidden_size, self.hidden_size)
         self.mention_query_proj = nn.Linear(self.hidden_size, self.hidden_size)
         self.mention_score = nn.Linear(self.hidden_size, 1)
-
-    def _pair_features(self, e_src, e_dst):
-        features = [e_src, e_dst, e_src * e_dst]
-        if self.pair_feature_mode == "product_diff":
-            features.append(e_src - e_dst)
-        return torch.cat(features, dim=-1)
-
-    def _pool_sequence(self, sequence_output, attention_mask):
-        if self.pooling == "cls":
-            return sequence_output[:, 0, :]
-
-        token_lengths = attention_mask.long().sum(dim=1).clamp(min=1) - 1
-        b_idx = torch.arange(sequence_output.size(0), device=sequence_output.device)
-        return sequence_output[b_idx, token_lengths, :]
-
-    def _pool_spans(self, last_hidden_state, spans):
-        original_shape = spans.shape[:-1]
-        flat_spans = spans.reshape(spans.size(0), -1, 2)
-        seq_len = last_hidden_state.size(1)
-        valid_mask = flat_spans[:, :, 0] != -1
-
-        starts = flat_spans[:, :, 0].clamp(min=0, max=seq_len - 1)
-        ends = flat_spans[:, :, 1].clamp(min=1, max=seq_len)
-        ends = torch.maximum(ends, starts + 1)
-
-        positions = torch.arange(seq_len, device=last_hidden_state.device).view(1, 1, seq_len)
-        span_mask = (positions >= starts.unsqueeze(-1)) & (positions < ends.unsqueeze(-1))
-        span_mask = span_mask & valid_mask.unsqueeze(-1)
-
-        weights = span_mask.to(last_hidden_state.dtype)
-        token_counts = weights.sum(dim=-1, keepdim=True).clamp(min=1.0)
-        pooled = torch.bmm(weights, last_hidden_state) / token_counts
-        pooled = pooled * valid_mask.unsqueeze(-1).to(pooled.dtype)
-        return pooled.reshape(*original_shape, last_hidden_state.size(-1))
-
-    def _build_query_context(self, base_entity_embs, query_indices):
-        max_entities = base_entity_embs.size(1)
-        sub_idx = query_indices[:, 0].clamp(min=0, max=max_entities - 1)
-        obj_idx = query_indices[:, 1].clamp(min=0, max=max_entities - 1)
-        b_idx = torch.arange(base_entity_embs.size(0), device=base_entity_embs.device)
-        e_sub = base_entity_embs[b_idx, sub_idx]
-        e_obj = base_entity_embs[b_idx, obj_idx]
-        return self.query_ctx_proj(torch.cat([e_sub, e_obj, e_sub * e_obj], dim=-1))
-
-    @staticmethod
-    def _aggregate_mentions_mean(mention_embs, mention_mask):
-        mention_mask_f = mention_mask.unsqueeze(-1).to(mention_embs.dtype)
-        mention_counts = mention_mask_f.sum(dim=2).clamp(min=1.0)
-        return (mention_embs * mention_mask_f).sum(dim=2) / mention_counts
-
-    def _aggregate_mentions_query_aware(self, mention_embs, mention_mask, query_indices):
-        base_entity_embs = self._aggregate_mentions_mean(mention_embs, mention_mask)
-        query_ctx = self._build_query_context(base_entity_embs, query_indices)
-        mention_keys = self.mention_key_proj(mention_embs)
-        query_bias = self.mention_query_proj(query_ctx).unsqueeze(1).unsqueeze(2)
-        mention_scores = self.mention_score(torch.tanh(mention_keys + query_bias)).squeeze(-1)
-        mention_scores = mention_scores.masked_fill(~mention_mask, -1e4)
-
-        attn = torch.softmax(mention_scores, dim=-1)
-        attn = attn * mention_mask.to(attn.dtype)
-        attn = attn / attn.sum(dim=-1, keepdim=True).clamp(min=1e-6)
-        return (attn.unsqueeze(-1) * mention_embs).sum(dim=2)
-
-    def get_entity_embeddings(self, last_hidden_state, entity_spans, query_indices, entity_mention_spans=None):
-        if self.entity_pooling == "mean" or entity_mention_spans is None:
-            return self._pool_spans(last_hidden_state, entity_spans)
-
-        mention_mask = entity_mention_spans[:, :, :, 0] != -1
-        mention_embs = self._pool_spans(last_hidden_state, entity_mention_spans)
-        if self.entity_pooling == "multi_mention":
-            return self._aggregate_mentions_mean(mention_embs, mention_mask)
-        return self._aggregate_mentions_query_aware(mention_embs, mention_mask, query_indices)
 
     def _build_forced_edge_index(self, path_node_ids, max_entities):
         if path_node_ids is None:

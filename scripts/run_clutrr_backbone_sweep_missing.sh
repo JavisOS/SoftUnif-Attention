@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /root/TSRA
+cd /root/TRUA
 
 RUN_ROOT="/vepfs/tsra_outputs/clutrr_backbone_sweep/clutrr_backbone_sweep_$(date +%Y%m%d_%H%M%S)"
 QUEUE="$RUN_ROOT/queue.tsv"
 STATUS_DIR="$RUN_ROOT/status"
 LOG_DIR="$RUN_ROOT/logs"
-GPU_MEM_THRESHOLD_MB="${TSRA_GPU_MEM_THRESHOLD_MB:-1000}"
-GPUS="${TSRA_CLUTRR_SWEEP_GPUS:-4,5,6,7}"
+GPU_MEM_THRESHOLD_MB="${TRUA_GPU_MEM_THRESHOLD_MB:-1000}"
+GPUS="${TRUA_CLUTRR_SWEEP_GPUS:-4,5,6,7}"
 
 mkdir -p "$STATUS_DIR" "$LOG_DIR"
 ln -sfn "$RUN_ROOT" /vepfs/tsra_outputs/clutrr_backbone_sweep/latest
@@ -119,7 +119,7 @@ run_task() {
       rc=66
     else
       CUDA_VISIBLE_DEVICES="$gpu" python -u -m clutrr.cli.train \
-        --config configs/clutrr/train_tsra.yaml \
+        --config configs/clutrr/train_trua.yaml \
         --dataset "$dataset" \
         --root data \
         --model_type "$model_type" \

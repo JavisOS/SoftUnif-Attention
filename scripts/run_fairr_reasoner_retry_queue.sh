@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /root/TSRA
+cd /root/TRUA
 
 MODEL_ROOT="/vepfs/tsra_models/hf"
 RUN_ROOT="/vepfs/tsra_outputs/official_external"
@@ -10,7 +10,7 @@ mkdir -p "$RUN_ROOT/logs"
 
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
-export TSRA_T5_LARGE_PATH="$MODEL_ROOT/t5-large"
+export TRUA_T5_LARGE_PATH="$MODEL_ROOT/t5-large"
 
 choose_gpu() {
   nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits \

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /root/TSRA
+cd /root/TRUA
 
 RUN_ROOT="/vepfs/tsra_outputs/formal_10ep/prop_bert_backbone_seeds_$(date +%Y%m%d_%H%M%S)"
 LOG_DIR="$RUN_ROOT/logs"
@@ -37,7 +37,7 @@ run_task() {
 
   echo "[$(date '+%F %T')] >>> $name on gpu=$gpu" | tee -a "$RUN_ROOT/queue.log"
   set +e
-  CUDA_VISIBLE_DEVICES="$gpu" python3 scripts/transformer_tsra_prop.py "$@" \
+  CUDA_VISIBLE_DEVICES="$gpu" python3 scripts/transformer_trua_prop.py "$@" \
     --model-name "$MODEL" \
     --epochs 10 \
     --out "$out" \
@@ -142,7 +142,7 @@ run_pronto_pair() {
     --seed "$seed"
 }
 
-# GPU0 is reserved for NLProofS. GPU1/2 are currently used by RoBERTa ProofWriter TSRA.
+# GPU0 is reserved for NLProofS. GPU1/2 are currently used by RoBERTa ProofWriter TRUA.
 run_proofwriter_pair 3 0 &
 run_proofwriter_pair 4 1 &
 run_ruletaker_pair 5 0 &

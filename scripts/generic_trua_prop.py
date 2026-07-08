@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lightweight dataset loaders for the generic TSRA-Prop runner."""
+"""Lightweight dataset loaders for the generic TRUA-Prop runner."""
 
 from __future__ import annotations
 

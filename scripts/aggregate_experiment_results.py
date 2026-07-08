@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aggregate TSRA experiment results from the current /vepfs run folders.
+"""Aggregate TRUA experiment results from the current /vepfs run folders.
 
 The script is intentionally read-only with respect to experiment outputs. It
 collects the formal 10-epoch runs, seed-42 completion runs, and the additional
@@ -299,7 +299,7 @@ def build_markdown() -> str:
     clutrrdb9 = collect_clutrr_db9()
 
     lines: list[str] = []
-    lines.append("# Aggregated TSRA Results")
+    lines.append("# Aggregated TRUA Results")
     lines.append("")
     lines.append("Generated from the completed `/vepfs` experiment folders on 2026-05-27. Values are `mean +/- sample-std` over seeds `0/1/42` unless noted.")
     lines.append("")
@@ -326,7 +326,7 @@ def build_markdown() -> str:
     ))
     lines.append("")
 
-    lines.append("## ProofWriter Main TSRA-Prop")
+    lines.append("## ProofWriter Main TRUA-Prop")
     lines.append("")
     pw = [r for r in prop_rows if r["dataset"] == "proofwriter"]
     lines.append(markdown_table(
@@ -335,7 +335,7 @@ def build_markdown() -> str:
     ))
     lines.append("")
 
-    lines.append("## RuleTaker GFaiR Split Main TSRA-Prop")
+    lines.append("## RuleTaker GFaiR Split Main TRUA-Prop")
     lines.append("")
     rt = [r for r in prop_rows if r["dataset"] == "ruletaker_gfair"]
     lines.append(markdown_table(
@@ -365,9 +365,9 @@ def build_markdown() -> str:
     lines.append("")
     lines.append("- CLUTRR values use the best logged evaluation point for main comparison; final-epoch values are also included for audit.")
     lines.append("- The strongest stable CLUTRR signal is trace/next-hop supervision versus label-only, especially for DeBERTa on long-hop examples.")
-    lines.append("- RuleTaker raw strict QDep shows a large TSRA gain over label-only on overall accuracy, but seed-to-seed variance is high and should be reported transparently.")
+    lines.append("- RuleTaker raw strict QDep shows a large TRUA gain over label-only on overall accuracy, but seed-to-seed variance is high and should be reported transparently.")
     lines.append("- PrOntoQA label accuracy is saturated in this processed split; trace@1 is the more informative internal-reasoning metric.")
-    lines.append("- ProofWriter DeBERTa seed42 baseline and TSRA are identical in the additional check; treat that cell as an audit flag rather than a strong conclusion.")
+    lines.append("- ProofWriter DeBERTa seed42 baseline and TRUA are identical in the additional check; treat that cell as an audit flag rather than a strong conclusion.")
     if warnings:
         lines.append("")
         lines.append("## Missing Inputs")

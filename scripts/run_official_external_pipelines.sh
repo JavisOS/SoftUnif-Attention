@@ -9,8 +9,8 @@ mkdir -p "$RUN_ROOT"/{fairr,gfair,logs}
 
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
-export TSRA_ROBERTA_LARGE_PATH="$MODEL_ROOT/roberta-large"
-export TSRA_T5_LARGE_PATH="$MODEL_ROOT/t5-large"
+export TRUA_ROBERTA_LARGE_PATH="$MODEL_ROOT/roberta-large"
+export TRUA_T5_LARGE_PATH="$MODEL_ROOT/t5-large"
 
 require_model() {
   local path="$1"

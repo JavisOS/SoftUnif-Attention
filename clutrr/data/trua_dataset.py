@@ -7,7 +7,7 @@ from clutrr.utils.graph_reasoning import apply_bijective_map, parse_graph_and_pa
 from clutrr.utils.parsing import parse_pair_literal
 
 
-class TsraClutrrDataset(CLUTRRDataset):
+class TruaClutrrDataset(CLUTRRDataset):
     def __init__(
         self,
         root,
@@ -46,7 +46,7 @@ class TsraClutrrDataset(CLUTRRDataset):
 
     def _build_item(self, row, row_idx: int):
         if self.tokenizer is None:
-            raise ValueError("TsraClutrrDataset requires a tokenizer for entity span alignment.")
+            raise ValueError("TruaClutrrDataset requires a tokenizer for entity span alignment.")
 
         graph_info = parse_graph_and_path(row)
         if graph_info is None:

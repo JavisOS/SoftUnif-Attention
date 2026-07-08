@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO=/root/TSRA
-BASE=/root/TSRA/external_baselines/NLProofS
+REPO=/root/TRUA
+BASE=/root/TRUA/external_baselines/NLProofS
 DATA=/vepfs/tsra_outputs/official_external/nlproofs_data/proofwriter-dataset-V2020.12.3/preprocessed_OWA/depth-3ext
 RUN_ROOT="/vepfs/tsra_outputs/official_external/nlproofs_ruletaker_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$RUN_ROOT/logs" "$RUN_ROOT/status" "$RUN_ROOT/prover" "$RUN_ROOT/verifier"

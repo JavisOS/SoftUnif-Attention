@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /root/TSRA
+cd /root/TRUA
 
 RUN_ROOT="/vepfs/tsra_outputs/official_external/gfair_full_$(date +%Y%m%d_%H%M%S)"
 LOG_DIR="$RUN_ROOT/logs"
@@ -10,7 +10,7 @@ mkdir -p "$LOG_DIR" "$STATUS_DIR"
 ln -sfn "$RUN_ROOT" /vepfs/tsra_outputs/official_external/latest_gfair_full
 
 MODEL_ROOT="/vepfs/tsra_models/hf"
-GFAIR_ROOT="/root/TSRA/external_baselines/GFaiR"
+GFAIR_ROOT="/root/TRUA/external_baselines/GFaiR"
 DATA_DIR="$GFAIR_ROOT/data"
 SELECTOR_CKPT="/vepfs/tsra_outputs/official_external/gfair/out_selector2_ruletaker/pytorch_model.bin26"
 

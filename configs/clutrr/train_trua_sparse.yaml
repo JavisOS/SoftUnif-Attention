@@ -1,4 +1,4 @@
-# Phase-1 sparse latent relation tensor diagnostic against the original DeBERTa TSRA baseline.
+# Phase-1 sparse latent relation tensor diagnostic against the original DeBERTa TRUA baseline.
 
 model_type: deberta
 epochs: 10

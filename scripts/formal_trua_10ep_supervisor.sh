@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /root/TSRA
+cd /root/TRUA
 
 RUN_ROOT="/vepfs/tsra_outputs/formal_10ep/tsra_formal_10ep_$(date +%Y%m%d_%H%M%S)"
 QUEUE="$RUN_ROOT/queue.tsv"
@@ -80,7 +80,7 @@ run_clutrr() {
   (
     set +e
     CUDA_VISIBLE_DEVICES="$gpu" python -u -m clutrr.cli.train \
-      --config configs/clutrr/train_tsra.yaml \
+      --config configs/clutrr/train_trua.yaml \
       --dataset data_089907f8 \
       --root data \
       --model_type "$model_type" \
@@ -130,7 +130,7 @@ run_prop() {
   (
     set +e
     args=(
-      scripts/transformer_tsra_prop.py
+      scripts/transformer_trua_prop.py
       --dataset "$dataset"
       --root "$root"
       --limit-train 0
@@ -163,7 +163,7 @@ run_prop() {
 }
 
 total_tasks=$(( $(wc -l < "$QUEUE") - 1 ))
-log "Formal TSRA 10ep supervisor started. total_tasks=$total_tasks run_root=$RUN_ROOT"
+log "Formal TRUA 10ep supervisor started. total_tasks=$total_tasks run_root=$RUN_ROOT"
 
 while [[ "$(dispatched_count)" -lt "$total_tasks" ]]; do
   gpu="$(free_gpu || true)"
@@ -195,4 +195,4 @@ while [[ "$(dispatched_count)" -lt "$total_tasks" ]]; do
   sleep 120
 done
 
-log "All formal TSRA 10ep queue entries have been dispatched."
+log "All formal TRUA 10ep queue entries have been dispatched."

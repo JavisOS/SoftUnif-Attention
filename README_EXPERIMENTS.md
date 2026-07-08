@@ -1,6 +1,6 @@
 # Experiment Setup Notes
 
-This file is the lightweight operational index for the TSRA experiment
+This file is the lightweight operational index for the TRUA experiment
 workspace. The full result tables and interpretation live in
 `EXPERIMENT_REPORT.md`; this file is meant to answer "where is the data, what
 script runs what, and where are the artifacts?" without duplicating every table.
@@ -10,29 +10,29 @@ script runs what, and where are the artifacts?" without duplicating every table.
 ### CLUTRR
 
 - Status: ready, already in repo.
-- Required split: `/root/TSRA/data/data_089907f8`.
+- Required split: `/root/TRUA/data/data_089907f8`.
 - Train: `1.2,1.3_train.csv`.
 - Test: `1.2_test.csv` through `1.10_test.csv`.
 - Policy: shallow train on hop 2/3; deep test emphasizes held-out hops >=6.
-- Follow-up split: `/root/TSRA/data/data_db9b8f04`, with
+- Follow-up split: `/root/TRUA/data/data_db9b8f04`, with
   `1.2,1.3,1.4_train.csv` for 2/3/4-hop training.
-- TSRA config: `/root/TSRA/configs/clutrr/train_tsra.yaml`.
-- EdgeTransformer copy: `/root/TSRA/external_baselines/EdgeTransformer/clutrr/data/data_089907f8`.
+- TRUA config: `/root/TRUA/configs/clutrr/train_trua.yaml`.
+- EdgeTransformer copy: `/root/TRUA/external_baselines/EdgeTransformer/clutrr/data/data_089907f8`.
 - Main outputs: `/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep` and
   `/vepfs/tsra_outputs/official_external/latest_edge_rat_clutrr_089907f8`.
 
 ### RuleTaker
 
 - Status: ready, already in repo.
-- Native path: `/root/TSRA/data/rule-reasoning-dataset-V2020.2.5.0/original`.
-- Current TSRA split: shallow train on low proof depth; eval includes depth-3ext
+- Native path: `/root/TRUA/data/rule-reasoning-dataset-V2020.2.5.0/original`.
+- Current TRUA split: shallow train on low proof depth; eval includes depth-3ext
   and depth-5 style settings where available.
-- Strict raw-depth follow-up: `scripts/transformer_tsra_prop.py --dataset
+- Strict raw-depth follow-up: `scripts/transformer_trua_prop.py --dataset
   ruletaker_raw` can filter by question-level QDep via `--train-qdeps` and
   `--test-qdeps`. The current follow-up queue trains QDep 1/2 and tests QDep
   1-5.
-- GFaiR data path: `/root/TSRA/external_baselines/GFaiR/data/ruletaker_3ext_sat`.
-- Main TSRA outputs:
+- GFaiR data path: `/root/TRUA/external_baselines/GFaiR/data/ruletaker_3ext_sat`.
+- Main TRUA outputs:
   `/vepfs/tsra_outputs/formal_10ep/latest_prop_bert_backbone_seeds/results`,
   `/vepfs/tsra_outputs/formal_10ep/latest_prop_roberta_backbone_seeds/results`,
   `/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep/results`, and
@@ -46,11 +46,11 @@ script runs what, and where are the artifacts?" without duplicating every table.
 
 - Official source: `https://aristo-data-public.s3.amazonaws.com/proofwriter/proofwriter-dataset-V2020.12.3.zip`.
 - Local staging used: `/private/tmp/tsra_data/proofwriter-dataset-V2020.12.3.zip`.
-- Dev-machine raw path: `/root/TSRA/data/proofwriter/raw/proofwriter-dataset-V2020.12.3`.
+- Dev-machine raw path: `/root/TRUA/data/proofwriter/raw/proofwriter-dataset-V2020.12.3`.
 - TOS target to record for reproducibility:
   `tos://c20250504/wy/data/proofwriter/proofwriter-dataset-V2020.12.3.zip`.
-- TSRA split: train depth 0/1/2; test depth-3 and depth-5.
-- Main TSRA outputs:
+- TRUA split: train depth 0/1/2; test depth-3 and depth-5.
+- Main TRUA outputs:
   `/vepfs/tsra_outputs/formal_10ep/latest_prop_bert_backbone_seeds/results`,
   `/vepfs/tsra_outputs/formal_10ep/latest_prop_roberta_backbone_seeds/results`,
   `/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep/results`, and
@@ -61,13 +61,13 @@ script runs what, and where are the artifacts?" without duplicating every table.
 ### PrOntoQA-OOD
 
 - Official repo: `https://github.com/asaparov/prontoqa`.
-- Raw path: `/root/TSRA/data/prontoqa_ood/raw/prontoqa`.
-- Generated OOD data: `/root/TSRA/data/prontoqa_ood/processed/generated_ood_data`.
+- Raw path: `/root/TRUA/data/prontoqa_ood/raw/prontoqa`.
+- Generated OOD data: `/root/TRUA/data/prontoqa_ood/processed/generated_ood_data`.
 - Official FLAN-T5 outputs:
-  `/root/TSRA/data/prontoqa_ood/processed/model_outputs_ood/flan-t5/latest`.
-- TSRA split: generated OOD/compositional examples with depth metadata where
+  `/root/TRUA/data/prontoqa_ood/processed/model_outputs_ood/flan-t5/latest`.
+- TRUA split: generated OOD/compositional examples with depth metadata where
   available; report label accuracy and trace/proof-step selection separately.
-- Main TSRA outputs:
+- Main TRUA outputs:
   `/vepfs/tsra_outputs/formal_10ep/latest_prop_bert_backbone_seeds/results`,
   `/vepfs/tsra_outputs/formal_10ep/latest_prop_roberta_backbone_seeds/results`,
   `/vepfs/tsra_outputs/formal_10ep/latest_tsra_formal_10ep/results`, and
@@ -78,7 +78,7 @@ script runs what, and where are the artifacts?" without duplicating every table.
 ### EdgeTransformer
 
 - Official code: `https://github.com/bergen/EdgeTransformer`.
-- Clone path: `/root/TSRA/external_baselines/EdgeTransformer`.
+- Clone path: `/root/TRUA/external_baselines/EdgeTransformer`.
 - Dataset: CLUTRR `data_089907f8`.
 - Status: reproduced with EdgeTransformer and RAT reference variants.
 - Current result path:
@@ -91,7 +91,7 @@ script runs what, and where are the artifacts?" without duplicating every table.
 ### GFaiR
 
 - Official code: `https://github.com/spirit-moon-fly/GFaiR`.
-- Clone path: `/root/TSRA/external_baselines/GFaiR`.
+- Clone path: `/root/TRUA/external_baselines/GFaiR`.
 - Dataset: RuleTaker.
 - Status: official selector2 and full pipeline were run.
 - Selector2 result path:
@@ -104,7 +104,7 @@ script runs what, and where are the artifacts?" without duplicating every table.
 ### FaiRR
 
 - Official code: `https://github.com/INK-USC/FaiRR`.
-- Clone path: `/root/TSRA/external_baselines/FaiRR`.
+- Clone path: `/root/TRUA/external_baselines/FaiRR`.
 - Dataset: ProofWriter.
 - Status: end-to-end official-style run completed.
 - Current result path:
@@ -114,7 +114,7 @@ script runs what, and where are the artifacts?" without duplicating every table.
 
 ### IBR
 
-- Clone path: `/root/TSRA/external_baselines/IBR`.
+- Clone path: `/root/TRUA/external_baselines/IBR`.
 - Dataset: RuleTaker depth-5.
 - Status: completed as an additional proof-reasoning reference baseline.
 - Current result path:
@@ -123,7 +123,7 @@ script runs what, and where are the artifacts?" without duplicating every table.
 
 ### NLProofS
 
-- Clone path: `/root/TSRA/external_baselines/NLProofS`.
+- Clone path: `/root/TRUA/external_baselines/NLProofS`.
 - Dataset: RuleTaker / ProofWriter-style depth-3ext data.
 - Status: training is complete; formal test is running from the trained
   checkpoint after a dev-machine shutdown interrupted the previous test pass.
@@ -134,11 +134,11 @@ script runs what, and where are the artifacts?" without duplicating every table.
 ### Diagnostic Attention/Transformer Baselines
 
 - Abstractor / Relational Cross-Attention:
-  `/root/TSRA/scripts/abstractor_rca_clutrr.py`.
+  `/root/TRUA/scripts/abstractor_rca_clutrr.py`.
 - Dual Attention Transformer:
-  `/root/TSRA/scripts/dual_attention_clutrr.py`.
+  `/root/TRUA/scripts/dual_attention_clutrr.py`.
 - MAC-style compositional attention:
-  `/root/TSRA/scripts/mac_attention_clutrr.py`.
+  `/root/TRUA/scripts/mac_attention_clutrr.py`.
 - Dataset for these adapters: CLUTRR `data_089907f8`.
 - These are adapted raw-text diagnostics, not official reproductions; use them
   to discuss shallow-vs-deep generalization behavior only with that caveat.
@@ -146,11 +146,11 @@ script runs what, and where are the artifacts?" without duplicating every table.
 ## Script Layout
 
 - `scripts/README.md`: maintained index for experiment launchers.
-- `scripts/formal_tsra_10ep_supervisor.sh`: formal 10-epoch CLUTRR TSRA
+- `scripts/formal_trua_10ep_supervisor.sh`: formal 10-epoch CLUTRR TRUA
   ablation queue.
-- `scripts/transformer_tsra_prop.py`: shared TSRA proposition/proof-step runner
+- `scripts/transformer_trua_prop.py`: shared TRUA proposition/proof-step runner
   for ProofWriter, RuleTaker, and PrOntoQA.
-- `scripts/run_*`: thin launchers for formal TSRA and external-baseline runs.
+- `scripts/run_*`: thin launchers for formal TRUA and external-baseline runs.
 - `scripts/run_additional_depth_seed_checks.sh`: CLUTRR `data_db9b8f04`,
   strict RuleTaker raw-QDep, and DeBERTa seed-42 follow-up queue.
 - `scripts/run_seed42_completion_after_additional.sh`: waits for the current

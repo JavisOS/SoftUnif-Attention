@@ -1,4 +1,4 @@
-"""CLUTRR / TSRA research code package."""
+"""CLUTRR / TRUA research code package."""
 
 from clutrr.config.defaults import DEFAULT_CLUTRR_DATASET, DEFAULT_CLUTRR_ROOT
 

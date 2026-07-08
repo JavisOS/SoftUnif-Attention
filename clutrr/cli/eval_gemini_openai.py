@@ -68,7 +68,7 @@ def build_arg_parser(defaults=None):
     defaults = defaults or EVAL_DEFAULTS
     parser = argparse.ArgumentParser(
         prog="python -m clutrr.cli.eval_gemini_openai",
-        description="Evaluate Gemini/OpenAI-compatible APIs on CLUTRR with TSRA-style metrics.",
+        description="Evaluate Gemini/OpenAI-compatible APIs on CLUTRR with TRUA-style metrics.",
     )
     parser.add_argument("--config", type=str, default=None, help="YAML config path. CLI args override YAML values.")
     parser.add_argument("--root", type=str, default=defaults["root"], help="CLUTRR data root.")
@@ -339,7 +339,7 @@ def evaluate(args):
     if "openrouter.ai" in args.base_url:
         default_headers = {
             "HTTP-Referer": "https://github.com/",
-            "X-Title": "TSRA-CLUTRR-Eval",
+            "X-Title": "TRUA-CLUTRR-Eval",
         }
 
     client = OpenAI(api_key=api_key, base_url=args.base_url, default_headers=default_headers)
@@ -501,7 +501,7 @@ def evaluate(args):
     summary = {
         "requested_model": args.model,
         "resolved_model": resolved_model,
-        "evaluation_mode": "raw_only" if args.raw_only else "tsra_style",
+        "evaluation_mode": "raw_only" if args.raw_only else "trua_style",
         "base_url": args.base_url,
         "dataset": args.dataset,
         "split": args.split,

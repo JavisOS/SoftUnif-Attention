@@ -1,13 +1,13 @@
 # Experiment Scripts
 
-This directory contains the lightweight orchestration scripts used for the TSRA
+This directory contains the lightweight orchestration scripts used for the TRUA
 experiment campaign. Generated logs, outputs, checkpoints, and downloaded
 models should stay under `/vepfs` and are ignored by git.
 
 Primary entry points:
 
-- `formal_tsra_10ep_supervisor.sh`: formal 10-epoch TSRA/label-only queue.
-- `transformer_tsra_prop.py`: DeBERTa/RoBERTa-style TSRA-Prop runner for
+- `formal_trua_10ep_supervisor.sh`: formal 10-epoch TRUA/label-only queue.
+- `transformer_trua_prop.py`: DeBERTa/RoBERTa-style TRUA-Prop runner for
   ProofWriter, RuleTaker, and PrOntoQA.
 - `run_prop_deberta_seed1_gpu7_retry.sh`: current seed-1 10-epoch retry queue
   for non-CLUTRR datasets.

@@ -1,4 +1,4 @@
-"""Shared CLUTRR dataset utilities used by TSRA and comparison baselines."""
+"""Shared CLUTRR dataset utilities used by TRUA and comparison baselines."""
 
 import csv
 import math

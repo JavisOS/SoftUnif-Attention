@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /root/TSRA
+cd /root/TRUA
 
 RUN_ROOT="/vepfs/tsra_outputs/additional_depth_checks/depth_seed_checks_$(date +%Y%m%d_%H%M%S)"
 QUEUE="$RUN_ROOT/queue.tsv"
 STATUS_DIR="$RUN_ROOT/status"
 LOG_DIR="$RUN_ROOT/logs"
 RESULT_DIR="$RUN_ROOT/results"
-GPUS="${TSRA_EXTRA_GPUS:-5,6,7}"
-GPU_MEM_THRESHOLD_MB="${TSRA_GPU_MEM_THRESHOLD_MB:-1000}"
+GPUS="${TRUA_EXTRA_GPUS:-5,6,7}"
+GPU_MEM_THRESHOLD_MB="${TRUA_GPU_MEM_THRESHOLD_MB:-1000}"
 MODEL="/vepfs/tsra_models/hf/deberta-base"
 
 mkdir -p "$STATUS_DIR" "$LOG_DIR" "$RESULT_DIR"
@@ -81,7 +81,7 @@ run_clutrr() {
   (
     set +e
     CUDA_VISIBLE_DEVICES="$gpu" python -u -m clutrr.cli.train \
-      --config configs/clutrr/train_tsra.yaml \
+      --config configs/clutrr/train_trua.yaml \
       --dataset "$dataset" \
       --root data \
       --model_type deberta \
@@ -133,7 +133,7 @@ run_prop() {
   (
     set +e
     args=(
-      scripts/transformer_tsra_prop.py
+      scripts/transformer_trua_prop.py
       --dataset "$dataset"
       --root "$root"
       --limit-train 0

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /root/TSRA
+cd /root/TRUA
 
 OUT="/vepfs/tsra_models/hf/roberta-base-clean-$(date +%Y%m%d_%H%M%S)"
 CACHE="/vepfs/tsra_models/hf_cache_clean_roberta"

@@ -1,4 +1,4 @@
-# CLUTRR TSRA training configuration
+# CLUTRR TRUA training configuration
 
 model_type: deberta
 epochs: 10

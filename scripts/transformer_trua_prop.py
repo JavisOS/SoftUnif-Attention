@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Transformer TSRA-Prop runner for ProofWriter/RuleTaker/PrOntoQA.
+"""Transformer TRUA-Prop runner for ProofWriter/RuleTaker/PrOntoQA.
 
 This upgrades the earlier BOW smoke runner to a shared DeBERTa encoder. It
-keeps TSRA's key constraint: gold trace supervises sentence-selection logits
+keeps TRUA's key constraint: gold trace supervises sentence-selection logits
 only during training; evaluation uses raw context/query text.
 """
 
@@ -21,8 +21,12 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModel, AutoTokenizer
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from generic_tsra_prop import load_prontoqa, load_proofwriter, load_ruletaker_gfair, load_ruletaker_raw
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(SCRIPT_DIR))
+from clutrr.models.trua_core import PROPOSITION_SEQUENCE_ADAPTER, masked_trace_distribution_loss
+from generic_trua_prop import load_prontoqa, load_proofwriter, load_ruletaker_gfair, load_ruletaker_raw
 
 
 class TextTraceDataset(Dataset):
@@ -84,9 +88,10 @@ class TextTraceDataset(Dataset):
         }
 
 
-class TransformerTsraProp(nn.Module):
+class TransformerTruaProp(nn.Module):
     def __init__(self, model_name: str, freeze_encoder: bool = True, dropout: float = 0.1):
         super().__init__()
+        self.adapter_spec = PROPOSITION_SEQUENCE_ADAPTER
         self.encoder = AutoModel.from_pretrained(model_name, local_files_only=True)
         hidden = self.encoder.config.hidden_size
         if freeze_encoder:
@@ -163,13 +168,7 @@ def evaluate(model, loader, device):
 
 
 def trace_ce_loss(scores, mask, trace):
-    has_trace = (trace * mask.float()).sum(dim=1) > 0
-    if not has_trace.any():
-        return scores.new_tensor(0.0)
-    masked_scores = scores[has_trace].masked_fill(~mask[has_trace], -1e4)
-    target = trace[has_trace] * mask[has_trace].float()
-    target = target / target.sum(dim=1, keepdim=True).clamp_min(1.0)
-    return -(target * torch.log_softmax(masked_scores, dim=-1)).sum(dim=-1).mean()
+    return masked_trace_distribution_loss(scores, mask, trace)
 
 
 def run(train, tests, args):
@@ -177,7 +176,7 @@ def run(train, tests, args):
     torch.manual_seed(args.seed)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, local_files_only=True)
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
-    model = TransformerTsraProp(args.model_name, freeze_encoder=args.freeze_encoder).to(device)
+    model = TransformerTruaProp(args.model_name, freeze_encoder=args.freeze_encoder).to(device)
     train_ds = TextTraceDataset(train, tokenizer, args.max_sents, args.max_len)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=train_ds.collate)
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=1e-4)

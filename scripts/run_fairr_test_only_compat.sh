@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /root/TSRA
+cd /root/TRUA
 
 RUN_ROOT="/vepfs/tsra_outputs/official_external/fairr_test_only_compat_$(date +%Y%m%d_%H%M%S)"
 LOG_DIR="$RUN_ROOT/logs"
@@ -36,7 +36,7 @@ run_eval() {
   } > "$started"
   (
     set +e
-    cd /root/TSRA/external_baselines/FaiRR
+    cd /root/TRUA/external_baselines/FaiRR
     CUDA_VISIBLE_DEVICES="$gpu" python main.py "$@" > "$log" 2>&1
     rc=$?
     if [[ "$rc" -eq 0 ]]; then

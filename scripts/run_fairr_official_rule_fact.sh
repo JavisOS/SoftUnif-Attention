@@ -9,7 +9,7 @@ mkdir -p "$RUN_ROOT/logs"
 
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
-export TSRA_ROBERTA_LARGE_PATH="$MODEL_ROOT/roberta-large"
+export TRUA_ROBERTA_LARGE_PATH="$MODEL_ROOT/roberta-large"
 
 if [[ ! -f "$MODEL_ROOT/roberta-large/config.json" ]]; then
   echo "Missing roberta-large under $MODEL_ROOT/roberta-large" >&2

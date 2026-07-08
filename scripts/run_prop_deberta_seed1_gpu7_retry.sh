@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /root/TSRA
+cd /root/TRUA
 
 RUN_ROOT="/vepfs/tsra_outputs/formal_10ep/prop_deberta_seed1_gpu7_retry_$(date +%Y%m%d_%H%M%S)"
 LOG_DIR="$RUN_ROOT/logs"
@@ -37,7 +37,7 @@ run_task() {
 
   echo "[$(date '+%F %T')] >>> $name" | tee -a "$RUN_ROOT/queue.log"
   set +e
-  CUDA_VISIBLE_DEVICES="$GPU" python3 scripts/transformer_tsra_prop.py "$@" \
+  CUDA_VISIBLE_DEVICES="$GPU" python3 scripts/transformer_trua_prop.py "$@" \
     --model-name "$MODEL" \
     --seed 1 \
     --epochs 10 \

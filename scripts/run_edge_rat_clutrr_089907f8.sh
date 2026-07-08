@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /root/TSRA
+cd /root/TRUA
 
 RUN_ROOT="/vepfs/tsra_outputs/official_external/edge_rat_clutrr_089907f8_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$RUN_ROOT/logs" "$RUN_ROOT/status"
 ln -sfn "$RUN_ROOT" /vepfs/tsra_outputs/official_external/latest_edge_rat_clutrr_089907f8
 
-cd /root/TSRA/external_baselines/EdgeTransformer/clutrr
+cd /root/TRUA/external_baselines/EdgeTransformer/clutrr
 mkdir -p logs
 
 (

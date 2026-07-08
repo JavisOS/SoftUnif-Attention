@@ -6,8 +6,8 @@ RUN_ROOT="/vepfs/tsra_outputs/official_external"
 mkdir -p "$RUN_ROOT/logs" "$RUN_ROOT/gfair/out_selector2_ruletaker"
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
-export TSRA_T5_LARGE_PATH="$MODEL_ROOT/t5-large"
-export TSRA_ROBERTA_LARGE_PATH="$MODEL_ROOT/roberta-large"
+export TRUA_T5_LARGE_PATH="$MODEL_ROOT/t5-large"
+export TRUA_ROBERTA_LARGE_PATH="$MODEL_ROOT/roberta-large"
 : > "$RUN_ROOT/remaining_modules_pids.txt"
 
 echo "[1/3] FaiRR official preprocessing: reasoner"

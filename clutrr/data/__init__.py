@@ -1,12 +1,12 @@
 """CLUTRR data modules."""
 
 from clutrr.data.clutrr_dataset import CLUTRRDataset, clutrr_loader
-from clutrr.data.tsra_collator import TsraBatchCollator
-from clutrr.data.tsra_dataset import TsraClutrrDataset
+from clutrr.data.trua_collator import TruaBatchCollator
+from clutrr.data.trua_dataset import TruaClutrrDataset
 
 __all__ = [
     "CLUTRRDataset",
-    "TsraBatchCollator",
-    "TsraClutrrDataset",
+    "TruaBatchCollator",
+    "TruaClutrrDataset",
     "clutrr_loader",
 ]

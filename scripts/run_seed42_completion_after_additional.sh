@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /root/TSRA
+cd /root/TRUA
 
 WAIT_PID_FILE="/vepfs/tsra_outputs/additional_depth_checks/latest_supervisor.pid"
-GPUS="${TSRA_SEED42_GPUS:-5,6,7}"
-GPU_MEM_THRESHOLD_MB="${TSRA_GPU_MEM_THRESHOLD_MB:-1000}"
+GPUS="${TRUA_SEED42_GPUS:-5,6,7}"
+GPU_MEM_THRESHOLD_MB="${TRUA_GPU_MEM_THRESHOLD_MB:-1000}"
 RUN_ROOT="/vepfs/tsra_outputs/formal_10ep/seed42_completion_$(date +%Y%m%d_%H%M%S)"
 QUEUE="$RUN_ROOT/queue.tsv"
 STATUS_DIR="$RUN_ROOT/status"
@@ -92,7 +92,7 @@ run_clutrr() {
   } > "$started"
   (
     set +e
-    CUDA_VISIBLE_DEVICES="$gpu" python -u -m clutrr.cli.train --config configs/clutrr/train_tsra.yaml --dataset "$dataset" --root data --model_type "$model_type" --model_name_or_path "$model_path" --epochs 10 --batch_size "$batch_size" --eval_batch_size 32 --gpus "$gpu" --strategy single --seed "$seed" --lambda_nexthop "$lambda_nexthop" --lambda_edge "$lambda_edge" --lambda_consistency "$lambda_consistency" > "$log_file" 2>&1
+    CUDA_VISIBLE_DEVICES="$gpu" python -u -m clutrr.cli.train --config configs/clutrr/train_trua.yaml --dataset "$dataset" --root data --model_type "$model_type" --model_name_or_path "$model_path" --epochs 10 --batch_size "$batch_size" --eval_batch_size 32 --gpus "$gpu" --strategy single --seed "$seed" --lambda_nexthop "$lambda_nexthop" --lambda_edge "$lambda_edge" --lambda_consistency "$lambda_consistency" > "$log_file" 2>&1
     rc=$?
     if [[ "$rc" -eq 0 ]]; then { cat "$started"; echo "finished_at=$(date '+%F %T')"; tail -n 80 "$log_file"; } > "$done"; else { cat "$started"; echo "failed_at=$(date '+%F %T')"; echo "exit_code=$rc"; tail -n 160 "$log_file"; } > "$failed"; fi
     exit "$rc"
@@ -108,7 +108,7 @@ run_prop() {
   } > "$started"
   (
     set +e
-    args=(scripts/transformer_tsra_prop.py --dataset "$dataset" --root "$root" --limit-train 0 --limit-test 0 --epochs 10 --batch-size "$batch_size" --lr "$lr" --lambda-trace "$lambda_trace" --max-sents "$max_sents" --max-len "$max_len" --model-name "$model_path" --seed "$seed" --out "$out_json")
+    args=(scripts/transformer_trua_prop.py --dataset "$dataset" --root "$root" --limit-train 0 --limit-test 0 --epochs 10 --batch-size "$batch_size" --lr "$lr" --lambda-trace "$lambda_trace" --max-sents "$max_sents" --max-len "$max_len" --model-name "$model_path" --seed "$seed" --out "$out_json")
     [[ "$train_depths" != "-" ]] && args+=(--train-depths "$train_depths")
     [[ "$test_depths" != "-" ]] && args+=(--test-depths "$test_depths")
     CUDA_VISIBLE_DEVICES="$gpu" python3 "${args[@]}" > "$log_file" 2>&1

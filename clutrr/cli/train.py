@@ -11,9 +11,9 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
-from clutrr.data.tsra_collator import TsraBatchCollator
-from clutrr.data.tsra_dataset import TsraClutrrDataset
-from clutrr.models.tsra_model import TsraReasonerModel
+from clutrr.data.trua_collator import TruaBatchCollator
+from clutrr.data.trua_dataset import TruaClutrrDataset
+from clutrr.models.trua_model import TruaReasonerModel
 from clutrr.utils.distributed import (
     is_distributed as _is_distributed,
     is_main_process as _is_main_process,
@@ -119,7 +119,7 @@ def build_arg_parser(defaults=None):
     defaults = defaults or BASE_TRAIN_DEFAULTS
     parser = argparse.ArgumentParser(
         prog="python -m clutrr.cli.train",
-        description="Train TSRA model on CLUTRR only.",
+        description="Train TRUA model on CLUTRR only.",
     )
     parser.add_argument(
         "--config",
@@ -139,7 +139,16 @@ def build_arg_parser(defaults=None):
             "deberta-v3-large",
             "bert",
             "modernbert",
+            "gpt2",
+            "llama3.2-1b",
+            "llama3.2-3b",
+            "qwen2.5-7b",
+            "qwen3-0.6b",
+            "qwen3-0.6b-base",
+            "qwen3-1.7b",
+            "qwen3-1.7b-base",
             "qwen3-8b",
+            "qwen3-8b-base",
         ],
         help="Model backbone type",
     )
@@ -386,10 +395,10 @@ def run_training():
     dset = args.dataset
 
     print("Loading Data (Augmentation Enabled)...")
-    train_ds = TsraClutrrDataset(root, dset, "train", 100, tokenizer=tokenizer, augment=True)
+    train_ds = TruaClutrrDataset(root, dset, "train", 100, tokenizer=tokenizer, augment=True)
     train_ds.data = [d for d in train_ds.data if d is not None]
 
-    test_ds = TsraClutrrDataset(
+    test_ds = TruaClutrrDataset(
         root,
         dset,
         "test",
@@ -400,7 +409,7 @@ def run_training():
     )
     test_ds.data = [d for d in test_ds.data if d is not None]
 
-    collator = TsraBatchCollator(tokenizer, device, model_type=args.model_type)
+    collator = TruaBatchCollator(tokenizer, device, model_type=args.model_type)
 
     if args.strategy == "ddp":
         train_sampler = DistributedSampler(train_ds, num_replicas=world_size, rank=rank, shuffle=True)
@@ -437,7 +446,7 @@ def run_training():
             num_workers=args.num_workers,
         )
 
-    model = TsraReasonerModel(
+    model = TruaReasonerModel(
         device,
         tokenizer,
         model_type=args.model_type,
@@ -566,6 +575,16 @@ def run_training():
             print(f"  Consistent & Correct: {metrics['consistent_and_correct']:.4f}")
             print(f"  Short Hop (2-3):      {metrics['short_hop']:.4f}")
             print(f"  Long Hop (>=6):       {metrics['long_hop']:.4f}")
+            per_hop = metrics.get("per_hop", {})
+            if per_hop:
+                parts = []
+                for hop in sorted(per_hop):
+                    item = per_hop[hop]
+                    parts.append(
+                        f"{hop}={item['accuracy']:.4f} "
+                        f"({item['correct']}/{item['total']})"
+                    )
+                print(f"  Per-Hop Acc:          {', '.join(parts)}")
 
     if args.strategy == "ddp" and _is_distributed():
         dist.barrier()
