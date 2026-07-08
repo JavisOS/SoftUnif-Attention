@@ -1,0 +1,157 @@
+{
+  "run_root": "/vepfs/tsra_outputs/unified_core_regression/unified_core_regression_20260601_144036",
+  "generated_at": "2026-06-02T07:38:04",
+  "rows": [
+    {
+      "name": "prontoqa_deberta_tsra_core",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "n": 3,
+      "train": [
+        200,
+        200,
+        200
+      ],
+      "splits": [
+        {
+          "split": "ood",
+          "accuracy": "1.0000 +/- 0.0000",
+          "trace_top1": "0.5178 +/- 0.1343",
+          "total": [
+            300,
+            300,
+            300
+          ],
+          "by_depth": {
+            "3": "1.0000 +/- 0.0000",
+            "4": "1.0000 +/- 0.0000"
+          }
+        }
+      ],
+      "files": [
+        "/vepfs/tsra_outputs/unified_core_regression/unified_core_regression_20260601_144036/results/prontoqa_deberta_tsra_core_seed0.json",
+        "/vepfs/tsra_outputs/unified_core_regression/unified_core_regression_20260601_144036/results/prontoqa_deberta_tsra_core_seed1.json",
+        "/vepfs/tsra_outputs/unified_core_regression/unified_core_regression_20260601_144036/results/prontoqa_deberta_tsra_core_seed42.json"
+      ]
+    },
+    {
+      "name": "proofwriter_deberta_tsra_core",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "n": 3,
+      "train": [
+        209598,
+        209598,
+        209598
+      ],
+      "splits": [
+        {
+          "split": "depth-3",
+          "accuracy": "0.8749 +/- 0.1265",
+          "trace_top1": "0.6351 +/- 0.3463",
+          "total": [
+            54724,
+            54724,
+            54724
+          ],
+          "by_depth": {
+            "0": "0.9301 +/- 0.0971",
+            "1": "0.9008 +/- 0.1320",
+            "2": "0.8439 +/- 0.2007",
+            "3": "0.6812 +/- 0.1232",
+            "4": "0.8170 +/- 0.0512",
+            "5": "0.8889 +/- 0.0222",
+            "6": "1.0000 +/- 0.0000",
+            "7": "1.0000 +/- 0.0000"
+          }
+        },
+        {
+          "split": "depth-5",
+          "accuracy": "0.8081 +/- 0.0799",
+          "trace_top1": "0.6039 +/- 0.3151",
+          "total": [
+            20030,
+            20030,
+            20030
+          ],
+          "by_depth": {
+            "0": "0.9220 +/- 0.0651",
+            "1": "0.8947 +/- 0.0902",
+            "2": "0.8305 +/- 0.1385",
+            "3": "0.6757 +/- 0.0668",
+            "4": "0.6225 +/- 0.0669",
+            "5": "0.5729 +/- 0.0503",
+            "6": "1.0000 +/- 0.0000",
+            "7": "1.0000 +/- 0.0000"
+          }
+        }
+      ],
+      "files": [
+        "/vepfs/tsra_outputs/unified_core_regression/unified_core_regression_20260601_144036/results/proofwriter_deberta_tsra_core_seed0.json",
+        "/vepfs/tsra_outputs/unified_core_regression/unified_core_regression_20260601_144036/results/proofwriter_deberta_tsra_core_seed1.json",
+        "/vepfs/tsra_outputs/unified_core_regression/unified_core_regression_20260601_144036/results/proofwriter_deberta_tsra_core_seed42.json"
+      ]
+    },
+    {
+      "name": "ruletaker_raw_deberta_tsra_core",
+      "seeds": [
+        0,
+        1,
+        42
+      ],
+      "n": 3,
+      "train": [
+        63796,
+        63796,
+        63796
+      ],
+      "splits": [
+        {
+          "split": "dev",
+          "accuracy": "0.7808 +/- 0.1315",
+          "trace_top1": "0.7463 +/- 0.2363",
+          "total": [
+            38344,
+            38344,
+            38344
+          ],
+          "by_depth": {
+            "1": "0.8231 +/- 0.2212",
+            "2": "0.8496 +/- 0.1623",
+            "3": "0.6451 +/- 0.2001",
+            "4": "0.5105 +/- 0.1924",
+            "5": "0.4755 +/- 0.2792"
+          }
+        },
+        {
+          "split": "test",
+          "accuracy": "0.7783 +/- 0.1353",
+          "trace_top1": "0.7444 +/- 0.2414",
+          "total": [
+            76817,
+            76817,
+            76817
+          ],
+          "by_depth": {
+            "1": "0.8188 +/- 0.2180",
+            "2": "0.8463 +/- 0.1650",
+            "3": "0.6414 +/- 0.1981",
+            "4": "0.5263 +/- 0.1471",
+            "5": "0.4944 +/- 0.2509"
+          }
+        }
+      ],
+      "files": [
+        "/vepfs/tsra_outputs/unified_core_regression/unified_core_regression_20260601_144036/results/ruletaker_raw_deberta_tsra_core_seed0.json",
+        "/vepfs/tsra_outputs/unified_core_regression/unified_core_regression_20260601_144036/results/ruletaker_raw_deberta_tsra_core_seed1.json",
+        "/vepfs/tsra_outputs/unified_core_regression/unified_core_regression_20260601_144036/results/ruletaker_raw_deberta_tsra_core_seed42.json"
+      ]
+    }
+  ]
+}

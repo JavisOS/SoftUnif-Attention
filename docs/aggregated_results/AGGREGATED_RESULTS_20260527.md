@@ -1,4 +1,4 @@
-# Aggregated TSRA Results
+# Aggregated TRUA Results
 
 Generated from the completed `/vepfs` experiment folders on 2026-05-27. Values are `mean +/- sample-std` over seeds `0/1/42` unless noted.
 
@@ -26,7 +26,7 @@ Generated from the completed `/vepfs` experiment folders on 2026-05-27. Values a
 | deberta | label_only | 3 | 0.5862 +/- 0.0173 | 0.7555 +/- 0.0076 | 0.4925 +/- 0.0314 | 0.5471 +/- 0.0182 | 0.4338 +/- 0.0300 |
 | deberta | tsra | 3 | 0.7455 +/- 0.0167 | 0.8596 +/- 0.0177 | 0.6508 +/- 0.0181 | 0.7074 +/- 0.0373 | 0.6131 +/- 0.0553 |
 
-## ProofWriter Main TSRA-Prop
+## ProofWriter Main TRUA-Prop
 
 | Backbone | Model | Seeds | Depth-3 Acc | Depth-5 Acc | Depth-3 Trace@1 | Depth-5 Trace@1 | ByDepth-3 | ByDepth-5 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -37,7 +37,7 @@ Generated from the completed `/vepfs` experiment folders on 2026-05-27. Values a
 | deberta | baseline | 0,1,42 | 0.8663 +/- 0.1197 | 0.8146 +/- 0.0880 | 0.2498 +/- 0.0585 | 0.1687 +/- 0.0231 | 0.7938 +/- 0.2219 | 0.7629 +/- 0.2148 |
 | deberta | tsra | 0,1,42 | 0.8740 +/- 0.1258 | 0.8068 +/- 0.0787 | 0.6197 +/- 0.3338 | 0.5896 +/- 0.3034 | 0.7372 +/- 0.1971 | 0.6570 +/- 0.1829 |
 
-## RuleTaker GFaiR Split Main TSRA-Prop
+## RuleTaker GFaiR Split Main TRUA-Prop
 
 | Backbone | Model | Seeds | Test Acc | Trace@1 | Depth Note |
 | --- | --- | --- | --- | --- | --- |
@@ -70,6 +70,6 @@ Generated from the completed `/vepfs` experiment folders on 2026-05-27. Values a
 
 - CLUTRR values use the best logged evaluation point for main comparison; final-epoch values are also included for audit.
 - The strongest stable CLUTRR signal is trace/next-hop supervision versus label-only, especially for DeBERTa on long-hop examples.
-- RuleTaker raw strict QDep shows a large TSRA gain over label-only on overall accuracy, but seed-to-seed variance is high and should be reported transparently.
+- RuleTaker raw strict QDep shows a large TRUA gain over label-only on overall accuracy, but seed-to-seed variance is high and should be reported transparently.
 - PrOntoQA label accuracy is saturated in this processed split; trace@1 is the more informative internal-reasoning metric.
-- ProofWriter DeBERTa seed42 baseline and TSRA are identical in the additional check; treat that cell as an audit flag rather than a strong conclusion.
+- ProofWriter DeBERTa seed42 baseline and TRUA are identical in the additional check; treat that cell as an audit flag rather than a strong conclusion.

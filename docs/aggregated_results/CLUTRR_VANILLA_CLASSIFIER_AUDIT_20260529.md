@@ -11,7 +11,7 @@ Dataset: `data_089907f8`, training on 2/3-hop CLUTRR files and testing on 2-10 h
 
 Entry point: `python -m clutrr.cli.baseline`.
 
-Setting: story + query input, Hugging Face encoder + linear classifier, final-label cross entropy only. This audit does not use entity spans, TSRA relation attention, trace/path supervision, renamed-input CE augmentation, or consistency losses.
+Setting: story + query input, Hugging Face encoder + linear classifier, final-label cross entropy only. This audit does not use entity spans, TRUA relation attention, trace/path supervision, renamed-input CE augmentation, or consistency losses.
 
 Values are `mean +/- sample-std` over seeds `0/1/42`. `Best` is selected by best logged overall accuracy across 10 epochs; `Final` is epoch 10.
 
@@ -45,4 +45,4 @@ Values are `mean +/- sample-std` over seeds `0/1/42`. `Best` is selected by best
 
 ## Interpretation
 
-This audit confirms that the CLUTRR same-backbone `label-only` rows in `CLUTRR_BACKBONE_SWEEP_20260529.md` are not plain vanilla classifier baselines. Those rows are TSRA-architecture label-only ablations. The pure classifier baselines are much lower on the same `data_089907f8` shallow-train/deep-test split across all five checked backbones.
+This audit confirms that the CLUTRR same-backbone `label-only` rows in `CLUTRR_BACKBONE_SWEEP_20260529.md` are not plain vanilla classifier baselines. Those rows are TRUA-architecture label-only ablations. The pure classifier baselines are much lower on the same `data_089907f8` shallow-train/deep-test split across all five checked backbones.
