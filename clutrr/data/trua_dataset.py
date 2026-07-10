@@ -1,7 +1,7 @@
 import random
 
 from clutrr.config.relation_schema import RELATION_ID_MAP_21_WITH_NOTHING as relation_id_map
-from clutrr.data.clutrr_dataset import CLUTRRDataset
+from clutrr.data.clutrr_dataset import CLUTRRDataset, official_hop_count
 from clutrr.utils.entity_alignment import align_entity_spans_to_tokens
 from clutrr.utils.graph_reasoning import apply_bijective_map, parse_graph_and_path
 from clutrr.utils.parsing import parse_pair_literal
@@ -99,7 +99,8 @@ class TruaClutrrDataset(CLUTRRDataset):
             "path_rel_labels": path_rel_labels,
             "node_spans": node_spans,
             "num_nodes": len(all_names),
-            "hops": len(graph_info["path_node_indices"]) - 1,
+            "hops": official_hop_count(row),
+            "reference_path_hops": len(graph_info["path_node_indices"]) - 1,
         }
 
         if self.augment:

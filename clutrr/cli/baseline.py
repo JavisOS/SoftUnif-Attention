@@ -10,6 +10,7 @@ import yaml
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
+from clutrr.data.clutrr_dataset import official_hop_count
 from clutrr.models.backbones import build_backbone_model, build_tokenizer, is_decoder_only_model
 from clutrr.utils.parsing import parse_pair_literal
 from clutrr.config.defaults import DEFAULT_CLUTRR_DATASET, DEFAULT_CLUTRR_ROOT
@@ -106,11 +107,7 @@ class CLUTRRBaselineDataset(Dataset):
             raise ValueError(f"Invalid query tuple format: {row[3]}")
         target_rel = row[5]
 
-        try:
-            task_name = row[10]
-            hops = int(task_name.split(".")[-1])
-        except Exception:
-            hops = -1
+        hops = official_hop_count(row)
 
         target_id = relation_id_map.get(target_rel, relation_id_map["nothing"])
 

@@ -11,6 +11,18 @@ from clutrr.utils.parsing import parse_pair_literal, safe_literal_eval
 from clutrr.config.relation_schema import RELATION_ID_MAP_21_WITH_NOTHING as relation_id_map
 
 
+def official_hop_count(row):
+    """Return the CLUTRR task length recorded by the released dataset."""
+    try:
+        task_name = str(row[10])
+        return int(task_name.rsplit(".", 1)[-1])
+    except (IndexError, TypeError, ValueError):
+        edges = safe_literal_eval(row[11], default=None)
+        if edges is None:
+            raise ValueError("CLUTRR row has neither a valid task name nor story edges")
+        return len(edges)
+
+
 class CLUTRRDataset(Dataset):
     def __init__(self, root, dataset, split, data_percentage):
         self.dataset_dir = os.path.join(root, f"{dataset}/")
@@ -47,13 +59,7 @@ class CLUTRRDataset(Dataset):
 
         answer = self.data[i][5]
 
-        try:
-            edges = safe_literal_eval(self.data[i][11], default=None)
-            if edges is None:
-                raise ValueError("Invalid edges format")
-            hops = len(edges)
-        except Exception:
-            hops = 0
+        hops = official_hop_count(self.data[i])
 
         return ((context, query), answer, hops, context_str)
 
