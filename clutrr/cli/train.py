@@ -22,6 +22,7 @@ from clutrr.utils.distributed import (
 from clutrr.training.robustness import evaluate_robustness
 from clutrr.training.model_selection import (
     clone_model_state,
+    repository_revision,
     restore_model_state,
     stratified_train_validation_split,
     write_metrics,
@@ -674,6 +675,7 @@ def run_training():
     write_metrics(
         args.metrics_out,
         {
+            "code_revision": repository_revision(),
             "dataset": dset,
             "model_type": args.model_type,
             "seed": args.seed,

@@ -4,11 +4,25 @@ from __future__ import annotations
 
 import json
 import random
+import subprocess
 from collections import defaultdict
 from pathlib import Path
 
 import torch
 from torch.utils.data import Subset
+
+
+def repository_revision(repo_root=None):
+    """Return the Git revision that produced a metrics artifact."""
+    root = Path(repo_root) if repo_root is not None else Path(__file__).resolve().parents[2]
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
 
 
 def stratified_train_validation_split(dataset, strata, validation_fraction=0.1, seed=2027):

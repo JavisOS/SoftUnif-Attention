@@ -26,7 +26,7 @@ from clutrr.models.trua_core import (
     TransitionRegularizedUnitAttentionCore,
     masked_evidence_distribution_loss,
 )
-from clutrr.training.model_selection import clone_model_state, restore_model_state
+from clutrr.training.model_selection import clone_model_state, repository_revision, restore_model_state
 from generic_trua_prop import load_prontoqa, load_proofwriter, load_ruletaker_gfair, load_ruletaker_raw
 
 
@@ -283,6 +283,7 @@ def run(train, validation, tests, args):
         loader = DataLoader(ds, batch_size=args.batch_size, collate_fn=ds.collate)
         results[name] = evaluate(model, loader, device)
     return {
+        "code_revision": repository_revision(),
         "dataset": args.dataset,
         "model_name": args.model_name,
         "lambda_evidence": args.lambda_evidence,

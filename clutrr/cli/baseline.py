@@ -17,6 +17,7 @@ from clutrr.config.relation_schema import RELATION_ID_MAP_21_WITH_NOTHING as rel
 from clutrr.utils.seed import set_seed
 from clutrr.training.model_selection import (
     clone_model_state,
+    repository_revision,
     restore_model_state,
     stratified_train_validation_split,
     write_metrics,
@@ -510,6 +511,7 @@ def run():
     write_metrics(
         args.metrics_out,
         {
+            "code_revision": repository_revision(),
             "dataset": args.dataset,
             "model_type": args.model_type,
             "seed": args.seed,
