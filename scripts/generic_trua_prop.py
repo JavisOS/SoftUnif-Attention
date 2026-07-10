@@ -4,12 +4,26 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from pathlib import Path
 
 
 _SENT_RE = re.compile(r"(?<=[.!?])\s+")
 _ID_RE = re.compile(r"(?:triple|rule)\d+")
+
+
+def _stable_limit(samples, limit):
+    if limit is None or limit >= len(samples):
+        return samples
+    if limit <= 0:
+        return []
+
+    def stable_key(sample):
+        identity = str(sample.get("id") or (sample.get("context", ""), sample.get("query", "")))
+        return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+    return sorted(samples, key=stable_key)[:limit]
 
 
 def _split_sentences(text: str):
@@ -66,9 +80,7 @@ def _load_meta_depth_dirs(depth_dirs, split: str, limit=None, qdep_filter=None):
                         "depth": depth,
                     }
                 )
-                if limit is not None and len(samples) >= limit:
-                    return samples
-    return samples
+    return _stable_limit(samples, limit)
 
 
 def load_proofwriter(root: Path, depths, split: str, limit=None):
@@ -118,9 +130,7 @@ def load_ruletaker_gfair(root: Path, split: str, limit=None):
                     "depth": int(m.group(1)) if m else -1,
                 }
             )
-            if limit is not None and len(samples) >= limit:
-                return samples
-    return samples
+    return _stable_limit(samples, limit)
 
 
 def _iter_pronto_examples(obj):
@@ -162,6 +172,4 @@ def load_prontoqa(root: Path, files, limit=None):
                     "depth": hop,
                 }
             )
-            if limit is not None and len(samples) >= limit:
-                return samples
-    return samples
+    return _stable_limit(samples, limit)
