@@ -112,7 +112,7 @@ def proposition_command(
         "--max-sents",
         str(max_sents),
         "--max-len",
-        "192",
+        "512",
         "--validation-seed",
         "2027",
         "--seed",
@@ -169,6 +169,7 @@ def build_tasks(result_dir):
                     model=MODEL_ROOT / "bert-base-uncased",
                     lambda_trace=lambda_trace,
                     extra=("--train-depths", "0,1,2", "--test-depths", "3,5", *extra),
+                    max_sents=32,
                 )
             )
 
@@ -195,7 +196,7 @@ def build_tasks(result_dir):
                         "--test-qdeps",
                         "1,2,3,4,5",
                     ),
-                    max_sents=24,
+                    max_sents=32,
                 )
             )
 

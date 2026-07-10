@@ -9,7 +9,11 @@ from clutrr.training.model_selection import stratified_train_validation_split
 from clutrr.training.robustness import _count_reference_transition_hits
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from transformer_trua_prop import select_query_anchor, validation_selection_key
+from transformer_trua_prop import (
+    complete_input_limits,
+    select_query_anchor,
+    validation_selection_key,
+)
 
 
 def _dense_hop_scores(edges, unit_count):
@@ -103,3 +107,10 @@ def test_transition_at_one_counts_each_reference_path_edge():
 def test_adapter_specs_distinguish_paths_from_evidence_sets():
     assert ENTITY_PATH_ADAPTER.supervision_type == "ordered_path"
     assert PROPOSITION_EVIDENCE_ADAPTER.supervision_type == "evidence_set"
+
+
+def test_proposition_defaults_preserve_complete_paper_inputs():
+    assert complete_input_limits("proofwriter", 16, 192) == (32, 512)
+    assert complete_input_limits("ruletaker_raw", 24, 192) == (32, 512)
+    assert complete_input_limits("prontoqa", 24, 192) == (24, 512)
+    assert complete_input_limits("proofwriter", 16, 192, allow_truncation=True) == (16, 192)

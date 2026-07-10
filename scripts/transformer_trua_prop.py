@@ -41,6 +41,18 @@ def validation_selection_key(metrics):
     return float(metrics["accuracy"]), float(metrics["evidence_at_1"])
 
 
+def complete_input_limits(dataset, max_sentences, max_context_tokens, allow_truncation=False):
+    if allow_truncation:
+        return max_sentences, max_context_tokens
+    minimum_sentences = {
+        "proofwriter": 32,
+        "ruletaker_raw": 32,
+        "ruletaker_gfair": 32,
+        "prontoqa": 24,
+    }
+    return max(max_sentences, minimum_sentences[dataset]), max(max_context_tokens, 512)
+
+
 class TextEvidenceDataset(Dataset):
     def __init__(self, samples, tokenizer, max_sents=12, max_len=160):
         self.samples = samples
@@ -293,6 +305,9 @@ def run(train, validation, tests, args):
         "test_depths": args.test_depths,
         "train_qdeps": args.train_qdeps,
         "test_qdeps": args.test_qdeps,
+        "max_sentences": args.max_sents,
+        "max_context_tokens": args.max_len,
+        "input_truncation_allowed": args.allow_input_truncation,
         "train": len(train),
         "validation": len(validation),
         "selected_epoch": best_epoch,
@@ -353,6 +368,7 @@ def main():
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--max-sents", type=int, default=12)
     parser.add_argument("--max-len", type=int, default=160)
+    parser.add_argument("--allow-input-truncation", action="store_true")
     parser.add_argument("--freeze-encoder", action="store_true")
     parser.add_argument("--relation-channels", type=int, default=8)
     parser.add_argument("--use-relation-conditioning", action=argparse.BooleanOptionalAction, default=True)
@@ -365,6 +381,12 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
+    args.max_sents, args.max_len = complete_input_limits(
+        args.dataset,
+        args.max_sents,
+        args.max_len,
+        args.allow_input_truncation,
+    )
     if args.limit_train is not None and args.limit_train <= 0:
         args.limit_train = None
     if args.limit_test is not None and args.limit_test <= 0:
