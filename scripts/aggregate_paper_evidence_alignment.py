@@ -38,7 +38,12 @@ def load_groups(result_dir):
 
 def aggregate_group(group, items):
     items = sorted(items)
-    row = {"group": group, "seeds": [seed for seed, _ in items]}
+    revisions = sorted({payload.get("code_revision", "unrecorded") for _, payload in items})
+    row = {
+        "group": group,
+        "seeds": [seed for seed, _ in items],
+        "code_revisions": revisions,
+    }
     if group.startswith("clutrr_"):
         tests = [payload["test"] for _, payload in items]
         row["kind"] = "clutrr"
@@ -143,6 +148,11 @@ def main():
     args = parser.parse_args()
     groups = load_groups(args.run_root / "results")
     rows = [aggregate_group(group, items) for group, items in sorted(groups.items())]
+    for row in rows:
+        if len(row["code_revisions"]) > 1:
+            print(
+                f"warning: {row['group']} mixes revisions: {', '.join(row['code_revisions'])}"
+            )
     (args.run_root / "aggregated.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
     (args.run_root / "aggregated.md").write_text(markdown(rows), encoding="utf-8")
     print(f"aggregated {len(rows)} groups from {sum(len(items) for items in groups.values())} runs")
