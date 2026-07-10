@@ -15,6 +15,12 @@ from clutrr.utils.parsing import parse_pair_literal
 from clutrr.config.defaults import DEFAULT_CLUTRR_DATASET, DEFAULT_CLUTRR_ROOT
 from clutrr.config.relation_schema import RELATION_ID_MAP_21_WITH_NOTHING as relation_id_map
 from clutrr.utils.seed import set_seed
+from clutrr.training.model_selection import (
+    clone_model_state,
+    restore_model_state,
+    stratified_train_validation_split,
+    write_metrics,
+)
 
 
 BASELINE_DEFAULTS = {
@@ -35,6 +41,11 @@ BASELINE_DEFAULTS = {
     "lora_alpha": 32,
     "lora_dropout": 0.05,
     "pooling": None,
+    "validation_fraction": 0.1,
+    "validation_seed": 2027,
+    "metrics_out": None,
+    "train_data_percentage": 100,
+    "test_data_percentage": 100,
 }
 
 
@@ -67,7 +78,9 @@ class CLUTRRBaselineDataset(Dataset):
         self.dataset_dir = os.path.join(root, f"{dataset}/")
 
         if os.path.exists(self.dataset_dir):
-            self.file_names = [os.path.join(self.dataset_dir, d) for d in os.listdir(self.dataset_dir) if f"_{split}.csv" in d]
+            self.file_names = sorted(
+                os.path.join(self.dataset_dir, d) for d in os.listdir(self.dataset_dir) if f"_{split}.csv" in d
+            )
             self.data = []
             for file_name in self.file_names:
                 with open(file_name, "r") as csv_file:
@@ -296,6 +309,18 @@ def build_arg_parser(defaults=None):
     )
     parser.add_argument("--root", type=str, default=defaults["root"], help="CLUTRR data root.")
     parser.add_argument("--dataset", type=str, default=defaults["dataset"], help="CLUTRR dataset folder.")
+    parser.add_argument(
+        "--train_data_percentage",
+        type=int,
+        default=defaults["train_data_percentage"],
+        help="Percentage of the training CSV used; keep at 100 for reported experiments.",
+    )
+    parser.add_argument(
+        "--test_data_percentage",
+        type=int,
+        default=defaults["test_data_percentage"],
+        help="Percentage of each test CSV used; keep at 100 for reported experiments.",
+    )
     parser.add_argument("--batch_size", type=int, default=defaults["batch_size"])
     parser.add_argument("--eval_batch_size", type=int, default=defaults["eval_batch_size"])
     parser.add_argument("--num_workers", type=int, default=defaults["num_workers"])
@@ -303,6 +328,24 @@ def build_arg_parser(defaults=None):
     parser.add_argument("--epochs", type=int, default=defaults["epochs"])
     parser.add_argument("--gpus", type=str, default=defaults["gpus"])
     parser.add_argument("--seed", type=int, default=defaults["seed"])
+    parser.add_argument(
+        "--validation_fraction",
+        type=float,
+        default=defaults["validation_fraction"],
+        help="Fraction of the training set reserved for checkpoint selection.",
+    )
+    parser.add_argument(
+        "--validation_seed",
+        type=int,
+        default=defaults["validation_seed"],
+        help="Fixed seed for the train/validation partition; independent of the model seed.",
+    )
+    parser.add_argument(
+        "--metrics_out",
+        type=str,
+        default=defaults["metrics_out"],
+        help="Optional JSON path for validation history and the selected test result.",
+    )
     parser.add_argument(
         "--use_qlora",
         action=argparse.BooleanOptionalAction,
@@ -357,12 +400,41 @@ def run():
     tokenizer = build_tokenizer(args.model_type, model_name_or_path=args.model_name_or_path)
     collator = BaselineCollator(tokenizer, device, model_type=args.model_type)
 
-    train_ds = CLUTRRBaselineDataset(args.root, args.dataset, "train")
-    test_ds = CLUTRRBaselineDataset(args.root, args.dataset, "test")
+    full_train_ds = CLUTRRBaselineDataset(
+        args.root,
+        args.dataset,
+        "train",
+        data_percentage=args.train_data_percentage,
+    )
+    train_items = [full_train_ds[index] for index in range(len(full_train_ds))]
+    train_strata = [(item["hops"], item["target_id"]) for item in train_items]
+    train_ds, validation_ds = stratified_train_validation_split(
+        full_train_ds,
+        train_strata,
+        validation_fraction=args.validation_fraction,
+        seed=args.validation_seed,
+    )
+    test_ds = CLUTRRBaselineDataset(
+        args.root,
+        args.dataset,
+        "test",
+        data_percentage=args.test_data_percentage,
+    )
+    print(
+        f"Train/validation split: {len(train_ds)}/{len(validation_ds)} "
+        f"(fraction={args.validation_fraction}, seed={args.validation_seed})"
+    )
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,
         shuffle=True,
+        collate_fn=collator,
+        num_workers=args.num_workers,
+    )
+    validation_loader = DataLoader(
+        validation_ds,
+        batch_size=args.eval_batch_size,
+        shuffle=False,
         collate_fn=collator,
         num_workers=args.num_workers,
     )
@@ -392,6 +464,10 @@ def run():
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     print("Starting Training...")
+    best_validation = -1.0
+    best_epoch = -1
+    best_state = None
+    validation_history = []
     for epoch in range(args.epochs):
         model.train()
         total_loss = 0.0
@@ -406,19 +482,48 @@ def run():
             pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
         print(f"Epoch {epoch + 1}: Loss = {total_loss / len(train_loader):.4f}")
-        overall, short_h, long_h, per_hop = evaluate(model, test_loader)
-        print(f"  Overall Acc (Base): {overall:.4f}")
-        print(f"  Short Hop (2-3):    {short_h:.4f}")
-        print(f"  Long Hop (>=6):     {long_h:.4f}")
-        if per_hop:
-            parts = []
-            for hop in sorted(per_hop):
-                item = per_hop[hop]
-                parts.append(
-                    f"{hop}={item['accuracy']:.4f} "
-                    f"({item['correct']}/{item['total']})"
-                )
-            print(f"  Per-Hop Acc:        {', '.join(parts)}")
+        overall, short_h, long_h, per_hop = evaluate(model, validation_loader)
+        validation_history.append(
+            {"epoch": epoch + 1, "overall": overall, "short_hop": short_h, "long_hop": long_h, "per_hop": per_hop}
+        )
+        print(f"  Validation Overall: {overall:.4f}")
+        if overall > best_validation:
+            best_validation = overall
+            best_epoch = epoch + 1
+            best_state = clone_model_state(model)
+
+    if best_state is None:
+        raise RuntimeError("No validation checkpoint was selected")
+    restore_model_state(model, best_state)
+    overall, short_h, long_h, per_hop = evaluate(model, test_loader)
+    print(f"Selected Validation Epoch: {best_epoch} (overall={best_validation:.4f})")
+    print("--> Test Evaluation (checkpoint selected on validation only)")
+    print(f"  Overall Acc (Base): {overall:.4f}")
+    print(f"  Short Hop (2-3):    {short_h:.4f}")
+    print(f"  Long Hop (>=6):     {long_h:.4f}")
+    if per_hop:
+        parts = []
+        for hop in sorted(per_hop):
+            item = per_hop[hop]
+            parts.append(f"{hop}={item['accuracy']:.4f} ({item['correct']}/{item['total']})")
+        print(f"  Per-Hop Acc:        {', '.join(parts)}")
+    write_metrics(
+        args.metrics_out,
+        {
+            "dataset": args.dataset,
+            "model_type": args.model_type,
+            "seed": args.seed,
+            "train_size": len(train_ds),
+            "validation_size": len(validation_ds),
+            "test_size": len(test_ds),
+            "validation_fraction": args.validation_fraction,
+            "validation_seed": args.validation_seed,
+            "selected_epoch": best_epoch,
+            "selected_validation_overall": best_validation,
+            "validation_history": validation_history,
+            "test": {"overall": overall, "short_hop": short_h, "long_hop": long_h, "per_hop": per_hop},
+        },
+    )
 
 
 if __name__ == "__main__":

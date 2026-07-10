@@ -20,6 +20,12 @@ from clutrr.utils.distributed import (
     setup_ddp,
 )
 from clutrr.training.robustness import evaluate_robustness
+from clutrr.training.model_selection import (
+    clone_model_state,
+    restore_model_state,
+    stratified_train_validation_split,
+    write_metrics,
+)
 from clutrr.models.backbones import build_tokenizer
 from clutrr.config.defaults import DEFAULT_CLUTRR_DATASET, DEFAULT_CLUTRR_ROOT
 from clutrr.utils.seed import set_seed
@@ -63,6 +69,14 @@ BASE_TRAIN_DEFAULTS = {
     "lambda_eq": 0.0,
     "relation_score_mode": "mlp",
     "relation_rank": 64,
+    "use_goal_guidance": True,
+    "use_aggregation_branch": True,
+    "use_step_branch": True,
+    "validation_fraction": 0.1,
+    "validation_seed": 2027,
+    "metrics_out": None,
+    "train_data_percentage": 100,
+    "test_data_percentage": 100,
 }
 
 
@@ -176,6 +190,18 @@ def build_arg_parser(defaults=None):
     parser.add_argument("--root", type=str, default=defaults["root"], help="Data root directory")
     parser.add_argument("--dataset", type=str, default=defaults["dataset"], help="Dataset folder name")
     parser.add_argument(
+        "--train_data_percentage",
+        type=int,
+        default=defaults["train_data_percentage"],
+        help="Percentage of the training CSV used; keep at 100 for reported experiments.",
+    )
+    parser.add_argument(
+        "--test_data_percentage",
+        type=int,
+        default=defaults["test_data_percentage"],
+        help="Percentage of each test CSV used; keep at 100 for reported experiments.",
+    )
+    parser.add_argument(
         "--gpus",
         type=str,
         default=defaults["gpus"],
@@ -206,6 +232,24 @@ def build_arg_parser(defaults=None):
         type=float,
         default=defaults["lambda_consistency"],
         help="Weight for consistency regularization loss",
+    )
+    parser.add_argument(
+        "--validation_fraction",
+        type=float,
+        default=defaults["validation_fraction"],
+        help="Fraction of the training set reserved for checkpoint selection.",
+    )
+    parser.add_argument(
+        "--validation_seed",
+        type=int,
+        default=defaults["validation_seed"],
+        help="Fixed seed for the train/validation partition; independent of the model seed.",
+    )
+    parser.add_argument(
+        "--metrics_out",
+        type=str,
+        default=defaults["metrics_out"],
+        help="Optional JSON path for validation history and the selected test result.",
     )
     parser.add_argument(
         "--sparse_top_k",
@@ -272,6 +316,24 @@ def build_arg_parser(defaults=None):
         action=argparse.BooleanOptionalAction,
         default=defaults["use_relation_conditioning"],
         help="Enable relation-conditioned FiLM and relation attention biases.",
+    )
+    parser.add_argument(
+        "--use_goal_guidance",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["use_goal_guidance"],
+        help="Inject the adapter-provided query goal into the step-selection query.",
+    )
+    parser.add_argument(
+        "--use_aggregation_branch",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["use_aggregation_branch"],
+        help="Enable relation-conditioned inter-unit aggregation.",
+    )
+    parser.add_argument(
+        "--use_step_branch",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["use_step_branch"],
+        help="Enable query-guided step-selection messages.",
     )
     parser.add_argument(
         "--edge_supervision_target",
@@ -371,6 +433,8 @@ def run_training():
 
     if args.use_qlora and args.strategy != "single":
         raise ValueError("QLoRA currently supports strategy=single only in this training script.")
+    if args.strategy == "ddp":
+        raise ValueError("Validation-selected training currently supports strategy=single or dp; run independent seeds per GPU.")
 
     set_seed(args.seed)
     if _is_main_process():
@@ -382,6 +446,8 @@ def run_training():
             "Diagnostics: "
             f"entity_pooling={args.entity_pooling}, prediction_head={args.prediction_head}, "
             f"relation_conditioning={args.use_relation_conditioning}, "
+            f"goal_guidance={args.use_goal_guidance}, aggregation_branch={args.use_aggregation_branch}, "
+            f"step_branch={args.use_step_branch}, "
             f"edge_target={args.edge_supervision_target}, pair_features={args.pair_feature_mode}, "
             f"consistency={args.consistency_mode}, sparse_top_k={args.sparse_top_k}, "
             f"force_gold_edges={args.force_gold_edges}, path_algebra={args.use_path_algebra}, "
@@ -395,14 +461,32 @@ def run_training():
     dset = args.dataset
 
     print("Loading Data (Augmentation Enabled)...")
-    train_ds = TruaClutrrDataset(root, dset, "train", 100, tokenizer=tokenizer, augment=True)
-    train_ds.data = [d for d in train_ds.data if d is not None]
+    full_train_ds = TruaClutrrDataset(
+        root,
+        dset,
+        "train",
+        args.train_data_percentage,
+        tokenizer=tokenizer,
+        augment=True,
+    )
+    full_train_ds.data = [d for d in full_train_ds.data if d is not None]
+    train_strata = [(item["hops"], item["target_id"]) for item in full_train_ds.data]
+    train_ds, validation_ds = stratified_train_validation_split(
+        full_train_ds,
+        train_strata,
+        validation_fraction=args.validation_fraction,
+        seed=args.validation_seed,
+    )
+    print(
+        f"Train/validation split: {len(train_ds)}/{len(validation_ds)} "
+        f"(fraction={args.validation_fraction}, seed={args.validation_seed})"
+    )
 
     test_ds = TruaClutrrDataset(
         root,
         dset,
         "test",
-        100,
+        args.test_data_percentage,
         tokenizer=tokenizer,
         augment=True,
         augment_seed=999,
@@ -411,40 +495,27 @@ def run_training():
 
     collator = TruaBatchCollator(tokenizer, device, model_type=args.model_type)
 
-    if args.strategy == "ddp":
-        train_sampler = DistributedSampler(train_ds, num_replicas=world_size, rank=rank, shuffle=True)
-        train_loader = DataLoader(
-            train_ds,
-            batch_size=args.batch_size,
-            shuffle=False,
-            sampler=train_sampler,
-            collate_fn=collator,
-            num_workers=args.num_workers,
-            pin_memory=True,
-        )
-        test_loader = DataLoader(
-            test_ds,
-            batch_size=args.eval_batch_size,
-            shuffle=False,
-            collate_fn=collator,
-            num_workers=args.num_workers,
-            pin_memory=True,
-        )
-    else:
-        train_loader = DataLoader(
-            train_ds,
-            batch_size=args.batch_size,
-            shuffle=True,
-            collate_fn=collator,
-            num_workers=args.num_workers,
-        )
-        test_loader = DataLoader(
-            test_ds,
-            batch_size=args.eval_batch_size,
-            shuffle=False,
-            collate_fn=collator,
-            num_workers=args.num_workers,
-        )
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=collator,
+        num_workers=args.num_workers,
+    )
+    validation_loader = DataLoader(
+        validation_ds,
+        batch_size=args.eval_batch_size,
+        shuffle=False,
+        collate_fn=collator,
+        num_workers=args.num_workers,
+    )
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=args.eval_batch_size,
+        shuffle=False,
+        collate_fn=collator,
+        num_workers=args.num_workers,
+    )
 
     model = TruaReasonerModel(
         device,
@@ -461,6 +532,9 @@ def run_training():
         prediction_head=args.prediction_head,
         consistency_mode=args.consistency_mode,
         use_relation_conditioning=args.use_relation_conditioning,
+        use_goal_guidance=args.use_goal_guidance,
+        use_aggregation_branch=args.use_aggregation_branch,
+        use_step_branch=args.use_step_branch,
         edge_supervision_target=args.edge_supervision_target,
         pair_feature_mode=args.pair_feature_mode,
         sparse_top_k=args.sparse_top_k,
@@ -499,6 +573,10 @@ def run_training():
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     print("Starting Training...")
+    best_validation = -1.0
+    best_epoch = -1
+    best_state = None
+    validation_history = []
 
     for epoch in range(args.epochs):
         if args.strategy == "ddp":
@@ -566,29 +644,59 @@ def run_training():
             )
 
         if _is_main_process():
-            print(f"--> Evaluating Robustness Epoch {epoch + 1}...")
-            metrics = evaluate_robustness(model, test_loader, device)
+            validation_metrics = evaluate_robustness(model, validation_loader, device)
+            validation_history.append({"epoch": epoch + 1, **validation_metrics})
+            print(f"  Validation Overall:  {validation_metrics['overall']:.4f}")
+            if validation_metrics["overall"] > best_validation:
+                best_validation = validation_metrics["overall"]
+                best_epoch = epoch + 1
+                best_state = clone_model_state(model)
 
-            print(f"  Overall Acc (Base):   {metrics['overall']:.4f}")
-            print(f"  Renamed Acc (Mod):    {metrics['renamed']:.4f}")
-            print(f"  Consistency:          {metrics['consistency']:.4f}")
-            print(f"  Consistent & Correct: {metrics['consistent_and_correct']:.4f}")
-            print(f"  Short Hop (2-3):      {metrics['short_hop']:.4f}")
-            print(f"  Long Hop (>=6):       {metrics['long_hop']:.4f}")
-            per_hop = metrics.get("per_hop", {})
-            if per_hop:
-                parts = []
-                for hop in sorted(per_hop):
-                    item = per_hop[hop]
-                    parts.append(
-                        f"{hop}={item['accuracy']:.4f} "
-                        f"({item['correct']}/{item['total']})"
-                    )
-                print(f"  Per-Hop Acc:          {', '.join(parts)}")
-
-    if args.strategy == "ddp" and _is_distributed():
-        dist.barrier()
-        dist.destroy_process_group()
+    if best_state is None:
+        raise RuntimeError("No validation checkpoint was selected")
+    restore_model_state(model, best_state)
+    test_metrics = evaluate_robustness(model, test_loader, device)
+    print(f"Selected Validation Epoch: {best_epoch} (overall={best_validation:.4f})")
+    print("--> Test Evaluation (checkpoint selected on validation only)")
+    print(f"  Overall Acc (Base):   {test_metrics['overall']:.4f}")
+    print(f"  Renamed Acc (Mod):    {test_metrics['renamed']:.4f}")
+    print(f"  Consistency:          {test_metrics['consistency']:.4f}")
+    print(f"  Consistent & Correct: {test_metrics['consistent_and_correct']:.4f}")
+    print(f"  Short Hop (2-3):      {test_metrics['short_hop']:.4f}")
+    print(f"  Long Hop (>=6):       {test_metrics['long_hop']:.4f}")
+    per_hop = test_metrics.get("per_hop", {})
+    if per_hop:
+        parts = []
+        for hop in sorted(per_hop):
+            item = per_hop[hop]
+            parts.append(f"{hop}={item['accuracy']:.4f} ({item['correct']}/{item['total']})")
+        print(f"  Per-Hop Acc:          {', '.join(parts)}")
+    write_metrics(
+        args.metrics_out,
+        {
+            "dataset": dset,
+            "model_type": args.model_type,
+            "seed": args.seed,
+            "train_size": len(train_ds),
+            "validation_size": len(validation_ds),
+            "test_size": len(test_ds),
+            "validation_fraction": args.validation_fraction,
+            "validation_seed": args.validation_seed,
+            "selected_epoch": best_epoch,
+            "selected_validation_overall": best_validation,
+            "validation_history": validation_history,
+            "test": test_metrics,
+            "configuration": {
+                "lambda_nexthop": args.lambda_nexthop,
+                "lambda_edge": args.lambda_edge,
+                "lambda_consistency": args.lambda_consistency,
+                "use_goal_guidance": args.use_goal_guidance,
+                "use_aggregation_branch": args.use_aggregation_branch,
+                "use_step_branch": args.use_step_branch,
+                "use_relation_conditioning": args.use_relation_conditioning,
+            },
+        },
+    )
 
 
 if __name__ == "__main__":

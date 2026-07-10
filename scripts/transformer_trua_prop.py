@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Transformer TRUA-Prop runner for ProofWriter/RuleTaker/PrOntoQA.
-
-This upgrades the earlier BOW smoke runner to a shared DeBERTa encoder. It
-keeps TRUA's key constraint: gold trace supervises sentence-selection logits
-only during training; evaluation uses raw context/query text.
-"""
+"""TRUA proposition adapter for ProofWriter, RuleTaker, and PrOntoQA."""
 
 from __future__ import annotations
 
@@ -25,7 +20,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(SCRIPT_DIR))
-from clutrr.models.trua_core import PROPOSITION_SEQUENCE_ADAPTER, masked_trace_distribution_loss
+from clutrr.models.relation_attention import RelationConditionedEntityAttention
+from clutrr.models.trua_core import (
+    PROPOSITION_SEQUENCE_ADAPTER,
+    TransitionRegularizedUnitAttentionCore,
+    masked_trace_distribution_loss,
+)
+from clutrr.training.model_selection import clone_model_state, restore_model_state
 from generic_trua_prop import load_prontoqa, load_proofwriter, load_ruletaker_gfair, load_ruletaker_raw
 
 
@@ -88,8 +89,18 @@ class TextTraceDataset(Dataset):
         }
 
 
-class TransformerTruaProp(nn.Module):
-    def __init__(self, model_name: str, freeze_encoder: bool = True, dropout: float = 0.1):
+class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
+    def __init__(
+        self,
+        model_name: str,
+        freeze_encoder: bool = True,
+        dropout: float = 0.1,
+        relation_channels: int = 8,
+        use_relation_conditioning: bool = True,
+        use_goal_guidance: bool = True,
+        use_aggregation_branch: bool = True,
+        use_step_branch: bool = True,
+    ):
         super().__init__()
         self.adapter_spec = PROPOSITION_SEQUENCE_ADAPTER
         self.encoder = AutoModel.from_pretrained(model_name, local_files_only=True)
@@ -99,6 +110,16 @@ class TransformerTruaProp(nn.Module):
                 p.requires_grad = False
         self.sent_proj = nn.Linear(hidden, hidden)
         self.query_proj = nn.Linear(hidden, hidden)
+        self.unit_attn = RelationConditionedEntityAttention(
+            hidden_size=hidden,
+            num_relations=relation_channels,
+            dropout=dropout,
+            top_k=None,
+            use_relation_conditioning=use_relation_conditioning,
+            use_goal_guidance=use_goal_guidance,
+            use_aggregation_branch=use_aggregation_branch,
+            use_step_branch=use_step_branch,
+        )
         self.classifier = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(hidden * 2, hidden),
@@ -123,10 +144,21 @@ class TransformerTruaProp(nn.Module):
         for i, n in enumerate(batch["sent_lens"].tolist()):
             sent[i, :n] = flat_sent[cursor : cursor + n]
             cursor += n
-        scores = (sent * query.unsqueeze(1)).sum(-1) / math.sqrt(hidden)
-        scores = scores.masked_fill(~batch["mask"], -1e4)
+
+        # The query anchor provides a common source row for evidence-set tasks.
+        units = torch.cat([query.unsqueeze(1), sent], dim=1)
+        unit_mask = torch.cat(
+            [torch.ones(bsz, 1, device=batch["mask"].device, dtype=torch.bool), batch["mask"]],
+            dim=1,
+        )
+        updated, transitions = self.unit_attn(units, unit_mask, goal_embedding=query)
+        anchor_edges = transitions["edge_index"][:, 0, :]
+        anchor_logits = transitions["hop_logits"][:, 0, :]
+        aligned_logits = anchor_logits.new_full((bsz, max_s + 1), -1e4)
+        aligned_logits.scatter_(1, anchor_edges, anchor_logits)
+        scores = aligned_logits[:, 1:].masked_fill(~batch["mask"], -1e4)
         attn = torch.softmax(scores, dim=-1)
-        ctx = (attn.unsqueeze(-1) * sent).sum(1)
+        ctx = (attn.unsqueeze(-1) * updated[:, 1:]).sum(1)
         logits = self.classifier(torch.cat([text, ctx], dim=-1))
         return logits, scores
 
@@ -171,15 +203,34 @@ def trace_ce_loss(scores, mask, trace):
     return masked_trace_distribution_loss(scores, mask, trace)
 
 
-def run(train, tests, args):
+def run(train, validation, tests, args):
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, local_files_only=True)
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
-    model = TransformerTruaProp(args.model_name, freeze_encoder=args.freeze_encoder).to(device)
+    model = TransformerTruaProp(
+        args.model_name,
+        freeze_encoder=args.freeze_encoder,
+        relation_channels=args.relation_channels,
+        use_relation_conditioning=args.use_relation_conditioning,
+        use_goal_guidance=args.use_goal_guidance,
+        use_aggregation_branch=args.use_aggregation_branch,
+        use_step_branch=args.use_step_branch,
+    ).to(device)
     train_ds = TextTraceDataset(train, tokenizer, args.max_sents, args.max_len)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=train_ds.collate)
+    validation_ds = TextTraceDataset(validation, tokenizer, args.max_sents, args.max_len)
+    validation_loader = DataLoader(
+        validation_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=validation_ds.collate,
+    )
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=1e-4)
+    best_validation = -1.0
+    best_epoch = -1
+    best_state = None
+    validation_history = []
     for epoch in range(args.epochs):
         model.train()
         total_loss = 0.0
@@ -193,7 +244,19 @@ def run(train, tests, args):
             loss.backward()
             opt.step()
             total_loss += loss.item()
-        print(f"epoch={epoch+1} loss={total_loss / max(len(train_loader), 1):.4f}")
+        validation_metrics = evaluate(model, validation_loader, device)
+        validation_history.append({"epoch": epoch + 1, **validation_metrics})
+        print(
+            f"epoch={epoch+1} loss={total_loss / max(len(train_loader), 1):.4f} "
+            f"validation_acc={validation_metrics['accuracy']:.4f}"
+        )
+        if validation_metrics["accuracy"] > best_validation:
+            best_validation = validation_metrics["accuracy"]
+            best_epoch = epoch + 1
+            best_state = clone_model_state(model)
+    if best_state is None:
+        raise RuntimeError("No validation checkpoint was selected")
+    restore_model_state(model, best_state)
     results = {}
     for name, samples in tests.items():
         ds = TextTraceDataset(samples, tokenizer, args.max_sents, args.max_len)
@@ -210,6 +273,17 @@ def run(train, tests, args):
         "train_qdeps": args.train_qdeps,
         "test_qdeps": args.test_qdeps,
         "train": len(train),
+        "validation": len(validation),
+        "selected_epoch": best_epoch,
+        "selected_validation_accuracy": best_validation,
+        "validation_history": validation_history,
+        "architecture": {
+            "relation_channels": args.relation_channels,
+            "use_relation_conditioning": args.use_relation_conditioning,
+            "use_goal_guidance": args.use_goal_guidance,
+            "use_aggregation_branch": args.use_aggregation_branch,
+            "use_step_branch": args.use_step_branch,
+        },
         "results": results,
     }
 
@@ -218,6 +292,19 @@ def _parse_ints(value):
     if value is None or value == "":
         return None
     return [int(x) for x in str(value).split(",") if x != ""]
+
+
+def _split_samples(samples, validation_fraction, seed):
+    if not 0.0 < validation_fraction < 1.0:
+        raise ValueError("validation_fraction must be between 0 and 1")
+    indices = list(range(len(samples)))
+    random.Random(seed).shuffle(indices)
+    validation_size = max(1, round(len(indices) * validation_fraction))
+    validation_size = min(validation_size, len(indices) - 1)
+    validation_indices = set(indices[:validation_size])
+    train = [sample for index, sample in enumerate(samples) if index not in validation_indices]
+    validation = [sample for index, sample in enumerate(samples) if index in validation_indices]
+    return train, validation
 
 
 def main():
@@ -238,6 +325,13 @@ def main():
     parser.add_argument("--max-sents", type=int, default=12)
     parser.add_argument("--max-len", type=int, default=160)
     parser.add_argument("--freeze-encoder", action="store_true")
+    parser.add_argument("--relation-channels", type=int, default=8)
+    parser.add_argument("--use-relation-conditioning", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--use-goal-guidance", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--use-aggregation-branch", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--use-step-branch", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--validation-fraction", type=float, default=0.1)
+    parser.add_argument("--validation-seed", type=int, default=2027)
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out", required=True)
@@ -252,11 +346,12 @@ def main():
         train_depths = _parse_ints(args.train_depths) or []
         test_depths = _parse_ints(args.test_depths) or []
         train = load_proofwriter(root, train_depths, "train", args.limit_train)
+        validation = load_proofwriter(root, train_depths, "dev", args.limit_test)
         tests = {f"depth-{d}": load_proofwriter(root, [d], "test", args.limit_test) for d in test_depths}
     elif args.dataset == "ruletaker_gfair":
         train = load_ruletaker_gfair(root, "train", args.limit_train)
+        validation = load_ruletaker_gfair(root, "dev", args.limit_test)
         tests = {
-            "dev": load_ruletaker_gfair(root, "dev", args.limit_test),
             "test": load_ruletaker_gfair(root, "test", args.limit_test),
         }
     elif args.dataset == "ruletaker_raw":
@@ -265,16 +360,19 @@ def main():
         train_qdeps = _parse_ints(args.train_qdeps)
         test_qdeps = _parse_ints(args.test_qdeps)
         train = load_ruletaker_raw(root, train_depths, "train", args.limit_train, qdeps=train_qdeps)
+        validation = load_ruletaker_raw(root, train_depths, "dev", args.limit_test, qdeps=train_qdeps)
         tests = {
-            "dev": load_ruletaker_raw(root, test_depths, "dev", args.limit_test, qdeps=test_qdeps),
             "test": load_ruletaker_raw(root, test_depths, "test", args.limit_test, qdeps=test_qdeps),
         }
     else:
         train_files = ["1hop_ProofsOnly_random_noadj.json", "2hop_ProofsOnly_random_noadj.json"]
         test_files = ["3hop_ProofsOnly_random_noadj.json", "4hop_ProofsOnly_random_noadj.json", "4hop_OOD_Composed_random_noadj.json"]
         train = load_prontoqa(root, train_files, args.limit_train)
+        train, validation = _split_samples(train, args.validation_fraction, args.validation_seed)
         tests = {"ood": load_prontoqa(root, test_files, args.limit_test)}
-    result = run(train, tests, args)
+    if not validation:
+        train, validation = _split_samples(train, args.validation_fraction, args.validation_seed)
+    result = run(train, validation, tests, args)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2), encoding="utf-8")

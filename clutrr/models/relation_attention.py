@@ -12,6 +12,9 @@ class RelationConditionedEntityAttention(nn.Module):
         dropout: float = 0.1,
         top_k: int | None = 8,
         use_relation_conditioning: bool = True,
+        use_goal_guidance: bool = True,
+        use_aggregation_branch: bool = True,
+        use_step_branch: bool = True,
         relation_score_mode: str = "mlp",
         relation_rank: int = 64,
     ):
@@ -20,6 +23,9 @@ class RelationConditionedEntityAttention(nn.Module):
         self.num_relations = num_relations
         self.top_k = top_k
         self.use_relation_conditioning = use_relation_conditioning
+        self.use_goal_guidance = use_goal_guidance
+        self.use_aggregation_branch = use_aggregation_branch
+        self.use_step_branch = use_step_branch
         if relation_score_mode not in {"mlp", "bilinear"}:
             raise ValueError(f"Unsupported relation_score_mode: {relation_score_mode}")
         self.relation_score_mode = relation_score_mode
@@ -98,18 +104,22 @@ class RelationConditionedEntityAttention(nn.Module):
         entity_embs: torch.Tensor,
         valid_mask: torch.Tensor,
         obj_indices: torch.Tensor | None = None,
+        goal_embedding: torch.Tensor | None = None,
         forced_edge_index: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         bsz, max_entities, hidden_size = entity_embs.shape
         valid_mask = valid_mask.bool()
 
         q_h = self.q_hop(entity_embs)
-        if obj_indices is not None:
+        if goal_embedding is None and obj_indices is not None:
             obj_idx = obj_indices.clamp(min=0, max=max_entities - 1)
             b_idx = torch.arange(bsz, device=entity_embs.device)
-            obj_emb = entity_embs[b_idx, obj_idx]
+            goal_embedding = entity_embs[b_idx, obj_idx]
             obj_valid = torch.gather(valid_mask, 1, obj_idx.unsqueeze(1)).squeeze(1)
-            q_h = q_h + self.q_obj(obj_emb).unsqueeze(1) * obj_valid[:, None, None].to(q_h.dtype)
+        else:
+            obj_valid = torch.ones(bsz, device=entity_embs.device, dtype=torch.bool)
+        if self.use_goal_guidance and goal_embedding is not None:
+            q_h = q_h + self.q_obj(goal_embedding).unsqueeze(1) * obj_valid[:, None, None].to(q_h.dtype)
 
         k_h = self.k_hop(entity_embs)
         base_scores_hop = torch.matmul(q_h, k_h.transpose(1, 2)) / math.sqrt(hidden_size)
@@ -159,6 +169,10 @@ class RelationConditionedEntityAttention(nn.Module):
         v_h_cond = dst_v_h * (1.0 + gamma) + beta
         msg_global = torch.sum(attn.unsqueeze(-1) * v_cond, dim=2)
         msg_hop = torch.sum(attn_hop.unsqueeze(-1) * v_h_cond, dim=2)
+        if not self.use_aggregation_branch:
+            msg_global = torch.zeros_like(msg_global)
+        if not self.use_step_branch:
+            msg_hop = torch.zeros_like(msg_hop)
 
         updated = self.ln(entity_embs + self.dropout(msg_global + msg_hop))
         out = torch.where(valid_mask.unsqueeze(-1), updated, torch.zeros_like(updated))
