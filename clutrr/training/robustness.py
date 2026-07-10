@@ -19,6 +19,42 @@ def _move_batch_to_device(batch: dict, device: torch.device, skip_keys: set[str]
     return moved
 
 
+def _count_reference_transition_hits(sparse_edges, path_node_ids):
+    """Count top-1 destination hits over all annotated path transitions."""
+    if sparse_edges is None or path_node_ids is None:
+        return 0, 0
+
+    edge_index = sparse_edges["edge_index"]
+    hop_logits = sparse_edges["hop_logits"]
+    edge_valid = sparse_edges.get("edge_valid", torch.ones_like(edge_index, dtype=torch.bool))
+    selected_position = hop_logits.masked_fill(~edge_valid, -1e4).argmax(dim=-1, keepdim=True)
+    selected_destination = torch.gather(edge_index, 2, selected_position).squeeze(-1)
+
+    hits = 0
+    total = 0
+    max_units = selected_destination.size(1)
+    for batch_index, padded_path in enumerate(path_node_ids):
+        path = padded_path[padded_path >= 0]
+        if path.numel() < 2:
+            continue
+        source = path[:-1]
+        destination = path[1:]
+        in_bounds = (
+            (source >= 0)
+            & (source < max_units)
+            & (destination >= 0)
+            & (destination < max_units)
+        )
+        if not bool(in_bounds.any()):
+            continue
+        source = source[in_bounds]
+        destination = destination[in_bounds]
+        predictions = selected_destination[batch_index, source]
+        hits += int((predictions == destination).sum().item())
+        total += int(destination.numel())
+    return hits, total
+
+
 def evaluate_robustness(model, loader, device):
     model.eval()
     base_model = _unwrap_model(model)
@@ -34,6 +70,8 @@ def evaluate_robustness(model, loader, device):
 
     by_hop_total = {}
     by_hop_correct = {}
+    transition_hits = 0
+    transition_total = 0
 
     with torch.no_grad():
         for batch in loader:
@@ -45,13 +83,19 @@ def evaluate_robustness(model, loader, device):
             y_target = batch["labels"]
             hops = batch["hops"]
 
-            logits_base, _, _ = base_model.compute_logits(
+            logits_base, _, sparse_edges_base = base_model.compute_logits(
                 input_ids=batch["input_ids"],
                 attention_mask=batch["attention_mask"],
                 entity_spans=batch["entity_spans"],
                 query_indices=batch["query_indices"],
             )
             preds_base = torch.argmax(logits_base, dim=1)
+            batch_transition_hits, batch_transition_total = _count_reference_transition_hits(
+                sparse_edges_base,
+                batch.get("path_node_ids"),
+            )
+            transition_hits += batch_transition_hits
+            transition_total += batch_transition_total
 
             logits_mod, _, _ = base_model.compute_logits(
                 input_ids=batch["aug_input_ids"],
@@ -124,6 +168,8 @@ def evaluate_robustness(model, loader, device):
     print(f"[Stats] Evaluated {total} samples.")
     print(f"  Changed Story Rate:   {changed_story_rate:.4f}")
     print(f"  Changed Query Rate:   {changed_query_rate:.4f}")
+    if transition_total > 0:
+        print(f"  Transition@1:         {transition_hits / transition_total:.4f}")
 
     return {
         "overall": acc_overall,
@@ -133,4 +179,7 @@ def evaluate_robustness(model, loader, device):
         "short_hop": short_acc,
         "long_hop": long_acc,
         "per_hop": per_hop,
+        "transition_at_1": transition_hits / transition_total if transition_total > 0 else 0,
+        "transition_hits": transition_hits,
+        "transition_total": transition_total,
     }

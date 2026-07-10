@@ -5,6 +5,7 @@ import torch
 
 from clutrr.models.relation_attention import RelationConditionedEntityAttention
 from clutrr.training.model_selection import stratified_train_validation_split
+from clutrr.training.robustness import _count_reference_transition_hits
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from transformer_trua_prop import select_query_anchor, validation_selection_key
@@ -70,3 +71,29 @@ def test_proposition_selection_uses_evidence_only_as_an_accuracy_tiebreaker():
 
     assert validation_selection_key(higher_accuracy) > validation_selection_key(lower_accuracy)
     assert validation_selection_key(same_accuracy_better_evidence) > validation_selection_key(higher_accuracy)
+
+
+def test_transition_at_one_counts_each_reference_path_edge():
+    edge_index = torch.tensor(
+        [
+            [[0, 1, 2], [0, 1, 2], [0, 1, 2]],
+            [[0, 1, 2], [0, 1, 2], [0, 1, 2]],
+        ]
+    )
+    hop_logits = torch.tensor(
+        [
+            [[0.0, 4.0, 1.0], [5.0, 0.0, 1.0], [0.0, 1.0, 2.0]],
+            [[1.0, 0.0, 2.0], [0.0, 2.0, 1.0], [3.0, 0.0, 1.0]],
+        ]
+    )
+    sparse_edges = {
+        "edge_index": edge_index,
+        "hop_logits": hop_logits,
+        "edge_valid": torch.ones_like(edge_index, dtype=torch.bool),
+    }
+    paths = torch.tensor([[0, 1, 2, -1], [2, 0, -1, -1]])
+
+    hits, total = _count_reference_transition_hits(sparse_edges, paths)
+
+    assert hits == 2
+    assert total == 3

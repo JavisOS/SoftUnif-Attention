@@ -52,6 +52,9 @@ def aggregate_group(group, items):
             values = [test[metric] for test in tests if metric in test]
             if values:
                 row[metric] = mean_std(values)
+        transition_values = [test["transition_at_1"] for test in tests if "transition_at_1" in test]
+        if transition_values:
+            row["transition_at_1"] = mean_std(transition_values)
         hops = sorted({hop for test in tests for hop in test.get("per_hop", {})}, key=int)
         row["per_hop"] = {
             hop: mean_std([test["per_hop"][hop]["accuracy"] for test in tests if hop in test.get("per_hop", {})])
@@ -63,6 +66,13 @@ def aggregate_group(group, items):
         row["selected_validation"] = mean_std(
             [payload["selected_validation_accuracy"] for _, payload in items]
         )
+        selected_evidence = [
+            payload["selected_validation_evidence_at_1"]
+            for _, payload in items
+            if "selected_validation_evidence_at_1" in payload
+        ]
+        if selected_evidence:
+            row["selected_validation_evidence_at_1"] = mean_std(selected_evidence)
         splits = sorted({split for _, payload in items for split in payload["results"]})
         row["splits"] = {}
         for split in splits:
@@ -70,7 +80,14 @@ def aggregate_group(group, items):
             depths = sorted({depth for result in results for depth in result.get("by_depth", {})}, key=int)
             row["splits"][split] = {
                 "accuracy": mean_std([result["accuracy"] for result in results]),
-                "evidence_at_1": mean_std([result["trace_top1"] for result in results]),
+                "evidence_at_1": mean_std(
+                    [
+                        result["evidence_at_1"]
+                        if "evidence_at_1" in result
+                        else result["trace_top1"]
+                        for result in results
+                    ]
+                ),
                 "by_depth": {
                     depth: mean_std(
                         [result["by_depth"][depth] for result in results if depth in result.get("by_depth", {})]
@@ -89,15 +106,16 @@ def markdown(rows):
         "",
         "## CLUTRR",
         "",
-        "| Group | Seeds | Selected epoch | Overall | Short | Long >=6 |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        "| Group | Seeds | Selected epoch | Overall | Short | Long >=6 | Transition@1 |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         if row["kind"] != "clutrr":
             continue
         lines.append(
             f"| {row['group']} | {len(row['seeds'])} | {fmt(row['selected_epoch'])} | "
-            f"{fmt(row['overall'])} | {fmt(row['short_hop'])} | {fmt(row['long_hop'])} |"
+            f"{fmt(row['overall'])} | {fmt(row['short_hop'])} | {fmt(row['long_hop'])} | "
+            f"{fmt(row['transition_at_1']) if 'transition_at_1' in row else '--'} |"
         )
     lines.extend(
         [
