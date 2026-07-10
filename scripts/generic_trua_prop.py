@@ -43,6 +43,11 @@ def _proof_ids(question):
     return set(_ID_RE.findall(proofs))
 
 
+def _first_existing(candidates):
+    """Resolve one dataset variant without silently mixing multiple variants."""
+    return next((path for path in candidates if path.exists()), None)
+
+
 def _load_meta_depth_dirs(depth_dirs, split: str, limit=None, qdep_filter=None):
     qdep_filter = set(qdep_filter) if qdep_filter is not None else None
     samples = []
@@ -87,7 +92,9 @@ def load_proofwriter(root: Path, depths, split: str, limit=None):
     depth_dirs = []
     for d in depths:
         candidates = [root / "OWA" / f"depth-{d}", root / "OWA" / f"depth-{d}ext-NatLang"]
-        depth_dirs.extend([p for p in candidates if p.exists()])
+        selected = _first_existing(candidates)
+        if selected is not None:
+            depth_dirs.append(selected)
     return _load_meta_depth_dirs(depth_dirs, split, limit)
 
 
@@ -95,7 +102,9 @@ def load_ruletaker_raw(root: Path, depth_dirs, split: str, limit=None, qdeps=Non
     dirs = []
     for d in depth_dirs:
         candidates = [root / f"depth-{d}", root / f"depth-{d}ext", root / f"depth-{d}ext-NatLang"]
-        dirs.extend([p for p in candidates if p.exists()])
+        selected = _first_existing(candidates)
+        if selected is not None:
+            dirs.append(selected)
     return _load_meta_depth_dirs(dirs, split, limit, qdep_filter=qdeps)
 
 

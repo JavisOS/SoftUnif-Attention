@@ -1,4 +1,5 @@
 import sys
+from tempfile import TemporaryDirectory
 from pathlib import Path
 
 import torch
@@ -14,6 +15,7 @@ from transformer_trua_prop import (
     select_query_anchor,
     validation_selection_key,
 )
+from generic_trua_prop import _first_existing
 
 
 def _dense_hop_scores(edges, unit_count):
@@ -114,3 +116,14 @@ def test_proposition_defaults_preserve_complete_paper_inputs():
     assert complete_input_limits("ruletaker_raw", 24, 192) == (32, 512)
     assert complete_input_limits("prontoqa", 24, 192) == (24, 512)
     assert complete_input_limits("proofwriter", 16, 192, allow_truncation=True) == (16, 192)
+
+
+def test_dataset_variant_resolution_does_not_mix_existing_directories():
+    with TemporaryDirectory() as temporary_directory:
+        root = Path(temporary_directory)
+        standard = root / "depth-3"
+        extended = root / "depth-3ext-NatLang"
+        standard.mkdir()
+        extended.mkdir()
+
+        assert _first_existing([standard, extended]) == standard
