@@ -418,6 +418,7 @@ def parse_training_args():
 
 def run_training():
     args = parse_training_args()
+    code_revision = repository_revision()
 
     if args.gpus is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpus)
@@ -675,7 +676,7 @@ def run_training():
     write_metrics(
         args.metrics_out,
         {
-            "code_revision": repository_revision(),
+            "code_revision": code_revision,
             "dataset": dset,
             "model_type": args.model_type,
             "seed": args.seed,

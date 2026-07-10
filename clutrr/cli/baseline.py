@@ -388,6 +388,7 @@ def parse_baseline_args():
 
 def run():
     args = parse_baseline_args()
+    code_revision = repository_revision()
 
     if args.gpus is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpus)
@@ -511,7 +512,7 @@ def run():
     write_metrics(
         args.metrics_out,
         {
-            "code_revision": repository_revision(),
+            "code_revision": code_revision,
             "dataset": args.dataset,
             "model_type": args.model_type,
             "seed": args.seed,

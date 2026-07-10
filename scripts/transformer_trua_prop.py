@@ -231,6 +231,7 @@ def evidence_ce_loss(scores, mask, evidence):
 
 
 def run(train, validation, tests, args):
+    code_revision = repository_revision()
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, local_files_only=True)
@@ -295,7 +296,7 @@ def run(train, validation, tests, args):
         loader = DataLoader(ds, batch_size=args.batch_size, collate_fn=ds.collate)
         results[name] = evaluate(model, loader, device)
     return {
-        "code_revision": repository_revision(),
+        "code_revision": code_revision,
         "dataset": args.dataset,
         "model_name": args.model_name,
         "lambda_evidence": args.lambda_evidence,
