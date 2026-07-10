@@ -53,7 +53,7 @@ def aggregate_group(group, items):
             if values:
                 row[metric] = mean_std(values)
         transition_values = [test["transition_at_1"] for test in tests if "transition_at_1" in test]
-        if transition_values:
+        if len(transition_values) == len(tests):
             row["transition_at_1"] = mean_std(transition_values)
         hops = sorted({hop for test in tests for hop in test.get("per_hop", {})}, key=int)
         row["per_hop"] = {
