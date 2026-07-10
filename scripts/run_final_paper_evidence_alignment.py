@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run validation-selected TRUA experiments across the available GPUs."""
+"""Run the final validation-selected TRUA paper protocol."""
 
 from __future__ import annotations
 
@@ -8,159 +8,59 @@ import json
 import os
 import re
 import subprocess
-import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
+os.environ.setdefault("TRUA_REPO_ROOT", "/root/TRUA")
+import run_paper_evidence_alignment as base
 
-REPO_ROOT = Path(os.environ.get("TRUA_REPO_ROOT", Path(__file__).resolve().parent.parent))
-DEFAULT_OUTPUT_ROOT = Path("/vepfs/trua_outputs/paper_evidence_alignment")
+
+REPO_ROOT = Path(os.environ["TRUA_REPO_ROOT"])
 MODEL_ROOT = Path("/vepfs/trua_models/hf")
 
 
-@dataclass
-class Task:
-    name: str
-    command: list[str]
-    result_path: str
-
-
-def clutrr_command(name, seed, result, *, vanilla=False, lambdas=(1.0, 1.0, 5.0), flags=()):
-    common = [
-        sys.executable,
-        "-u",
-        "-m",
-        "clutrr.cli.baseline" if vanilla else "clutrr.cli.train",
-        "--dataset",
-        "data_089907f8",
-        "--root",
-        str(REPO_ROOT / "data"),
-        "--model_type",
-        "deberta",
-        "--model_name_or_path",
-        str(MODEL_ROOT / "deberta-base"),
-        "--epochs",
-        "10",
-        "--batch_size",
-        "16",
-        "--eval_batch_size",
-        "32",
-        "--gpus",
-        "__GPU__",
-        "--seed",
-        str(seed),
-        "--validation_fraction",
-        "0.1",
-        "--validation_seed",
-        "2027",
-        "--metrics_out",
-        str(result),
-    ]
-    if not vanilla:
-        common.extend(
-            [
-                "--lambda_nexthop",
-                str(lambdas[0]),
-                "--lambda_edge",
-                str(lambdas[1]),
-                "--lambda_consistency",
-                str(lambdas[2]),
-                *flags,
-            ]
-        )
-    return Task(name=name, command=common, result_path=str(result))
-
-
-def proposition_command(
-    name,
-    seed,
-    result,
-    *,
-    dataset,
-    root,
-    model,
-    lambda_evidence,
-    extra=(),
-    limit_train=30000,
-    limit_test=5000,
-    max_sents=16,
-):
-    command = [
-        sys.executable,
-        "-u",
-        "scripts/transformer_trua_prop.py",
-        "--dataset",
-        dataset,
-        "--root",
-        str(root),
-        "--model-name",
-        str(model),
-        "--lambda-evidence",
-        str(lambda_evidence),
-        "--limit-train",
-        str(limit_train),
-        "--limit-test",
-        str(limit_test),
-        "--epochs",
-        "10",
-        "--batch-size",
-        "16",
-        "--lr",
-        "2e-5",
-        "--max-sents",
-        str(max_sents),
-        "--max-len",
-        "512",
-        "--validation-seed",
-        "2027",
-        "--seed",
-        str(seed),
-        "--out",
-        str(result),
-        *extra,
-    ]
-    return Task(name=name, command=command, result_path=str(result))
-
-
-def build_tasks(result_dir):
+def build_tasks(result_dir: Path):
     seeds = (0, 1, 42)
     tasks = []
-    clutrr_variants = [
-        ("full", (1, 1, 5), ()),
-        ("label_only", (0, 0, 0), ()),
-        ("no_goal", (1, 1, 5), ("--no-use_goal_guidance",)),
-        ("no_aggregation", (1, 1, 5), ("--no-use_aggregation_branch",)),
-        ("no_step", (0, 1, 5), ("--no-use_step_branch",)),
-        ("no_relation", (1, 1, 5), ("--no-use_relation_conditioning",)),
+    clutrr_variants = (
+        ("trua", (1, 1, 0), ()),
+        ("with_consistency", (1, 1, 5), ()),
+        ("answer_only", (0, 0, 0), ()),
         ("transition_only", (1, 0, 0), ()),
         ("edge_only", (0, 1, 0), ()),
-        ("consistency_only", (0, 0, 5), ()),
-        ("no_transition", (0, 1, 5), ()),
-        ("no_edge", (1, 0, 5), ()),
-        ("no_consistency", (1, 1, 0), ()),
-    ]
+        ("no_goal", (1, 1, 0), ("--no-use_goal_guidance",)),
+        ("no_aggregation", (1, 1, 0), ("--no-use_aggregation_branch",)),
+        ("no_step", (0, 1, 0), ("--no-use_step_branch",)),
+        ("no_relation", (1, 1, 0), ("--no-use_relation_conditioning",)),
+    )
     for variant, lambdas, flags in clutrr_variants:
         for seed in seeds:
             name = f"clutrr_deberta_{variant}_seed{seed}"
             tasks.append(
-                clutrr_command(name, seed, result_dir / f"{name}.json", lambdas=lambdas, flags=flags)
+                base.clutrr_command(
+                    name,
+                    seed,
+                    result_dir / f"{name}.json",
+                    lambdas=lambdas,
+                    flags=flags,
+                )
             )
     for seed in seeds:
         name = f"clutrr_deberta_vanilla_seed{seed}"
-        tasks.append(clutrr_command(name, seed, result_dir / f"{name}.json", vanilla=True))
+        tasks.append(base.clutrr_command(name, seed, result_dir / f"{name}.json", vanilla=True))
 
     proof_root = REPO_ROOT / "data/proofwriter/raw/proofwriter-dataset-V2020.12.3"
-    for variant, lambda_evidence, extra in [
-        ("full", 1.0, ()),
+    for variant, lambda_evidence, extra in (
+        ("trua", 1.0, ()),
         ("no_evidence", 0.0, ()),
         ("no_goal", 1.0, ("--no-use-goal-guidance",)),
-    ]:
+    ):
         for seed in seeds:
             name = f"proofwriter_bert_{variant}_seed{seed}"
             tasks.append(
-                proposition_command(
+                base.proposition_command(
                     name,
                     seed,
                     result_dir / f"{name}.json",
@@ -174,11 +74,11 @@ def build_tasks(result_dir):
             )
 
     rule_root = REPO_ROOT / "data/rule-reasoning-dataset-V2020.2.5.0/original"
-    for variant, lambda_evidence in [("full", 1.0), ("no_evidence", 0.0)]:
+    for variant, lambda_evidence in (("trua", 1.0), ("no_evidence", 0.0)):
         for seed in seeds:
             name = f"ruletaker_raw_deberta_{variant}_seed{seed}"
             tasks.append(
-                proposition_command(
+                base.proposition_command(
                     name,
                     seed,
                     result_dir / f"{name}.json",
@@ -201,11 +101,11 @@ def build_tasks(result_dir):
             )
 
     pronto_root = REPO_ROOT / "data/prontoqa_ood/processed/generated_ood_data"
-    for variant, lambda_evidence in [("full", 1.0), ("no_evidence", 0.0)]:
+    for variant, lambda_evidence in (("trua", 1.0), ("no_evidence", 0.0)):
         for seed in seeds:
             name = f"prontoqa_bert_{variant}_seed{seed}"
             tasks.append(
-                proposition_command(
+                base.proposition_command(
                     name,
                     seed,
                     result_dir / f"{name}.json",
@@ -221,47 +121,36 @@ def build_tasks(result_dir):
     return tasks
 
 
-def write_json(path, payload):
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    temporary.replace(path)
-
-
-def result_is_complete(path):
-    try:
-        json.loads(path.read_text(encoding="utf-8"))
-        return True
-    except (OSError, json.JSONDecodeError):
-        return False
-
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-root", type=Path)
+    parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--gpus", default="0,1,2,3")
     parser.add_argument("--poll-seconds", type=int, default=20)
-    parser.add_argument("--task-pattern", default=".*", help="Regular expression selecting task names.")
+    parser.add_argument("--task-pattern", default=".*")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_root = (args.run_root or DEFAULT_OUTPUT_ROOT / timestamp).resolve()
+    run_root = args.run_root.resolve()
     result_dir = run_root / "results"
     log_dir = run_root / "logs"
     result_dir.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
-    gpus = [gpu.strip() for gpu in args.gpus.split(",") if gpu.strip()]
-    task_pattern = re.compile(args.task_pattern)
-    tasks = [task for task in build_tasks(result_dir) if task_pattern.search(task.name)]
+    pattern = re.compile(args.task_pattern)
+    tasks = [task for task in build_tasks(result_dir) if pattern.search(task.name)]
     if args.dry_run:
         print(json.dumps([asdict(task) for task in tasks], indent=2))
         return
-    pending = [task for task in tasks if not result_is_complete(Path(task.result_path))]
-    completed = [task.name for task in tasks if result_is_complete(Path(task.result_path))]
+
+    gpus = [gpu.strip() for gpu in args.gpus.split(",") if gpu.strip()]
+    pending = [task for task in tasks if not base.result_is_complete(Path(task.result_path))]
+    completed = [task.name for task in tasks if base.result_is_complete(Path(task.result_path))]
     failed = {}
     running = {}
+    base.write_json(
+        run_root / "manifest.json",
+        {"created_at": datetime.now().isoformat(timespec="seconds"), "tasks": [asdict(task) for task in tasks]},
+    )
 
-    write_json(run_root / "manifest.json", {"created_at": timestamp, "tasks": [asdict(task) for task in tasks]})
     while pending or running:
         free_gpus = [gpu for gpu in gpus if gpu not in running]
         while pending and free_gpus:
@@ -280,7 +169,7 @@ def main():
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
             )
-            running[gpu] = {"task": task, "process": process, "log": log_handle, "started": time.time()}
+            running[gpu] = {"task": task, "process": process, "log": log_handle}
             print(f"launched {task.name} on GPU {gpu} pid={process.pid}", flush=True)
 
         time.sleep(args.poll_seconds)
@@ -290,7 +179,7 @@ def main():
                 continue
             item["log"].close()
             task = item["task"]
-            if return_code == 0 and result_is_complete(Path(task.result_path)):
+            if return_code == 0 and base.result_is_complete(Path(task.result_path)):
                 completed.append(task.name)
                 print(f"completed {task.name} on GPU {gpu}", flush=True)
             else:
@@ -298,7 +187,7 @@ def main():
                 print(f"failed {task.name} on GPU {gpu} rc={return_code}", flush=True)
             del running[gpu]
 
-        write_json(
+        base.write_json(
             run_root / "status.json",
             {
                 "updated_at": datetime.now().isoformat(timespec="seconds"),
@@ -312,7 +201,7 @@ def main():
 
     if failed:
         raise SystemExit(f"{len(failed)} tasks failed")
-    print(f"all {len(tasks)} tasks completed in {run_root}", flush=True)
+    print(f"all {len(tasks)} final tasks completed in {run_root}", flush=True)
 
 
 if __name__ == "__main__":
