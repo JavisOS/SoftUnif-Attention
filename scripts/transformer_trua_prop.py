@@ -30,6 +30,12 @@ from clutrr.training.model_selection import clone_model_state, restore_model_sta
 from generic_trua_prop import load_prontoqa, load_proofwriter, load_ruletaker_gfair, load_ruletaker_raw
 
 
+def select_query_anchor(query, shared_anchor, use_goal_guidance):
+    if use_goal_guidance:
+        return query
+    return shared_anchor.unsqueeze(0).expand(query.size(0), -1)
+
+
 class TextTraceDataset(Dataset):
     def __init__(self, samples, tokenizer, max_sents=12, max_len=160):
         self.samples = samples
@@ -108,8 +114,10 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
         if freeze_encoder:
             for p in self.encoder.parameters():
                 p.requires_grad = False
+        self.use_goal_guidance = use_goal_guidance
         self.sent_proj = nn.Linear(hidden, hidden)
         self.query_proj = nn.Linear(hidden, hidden)
+        self.shared_anchor = nn.Parameter(torch.zeros(hidden))
         self.unit_attn = RelationConditionedEntityAttention(
             hidden_size=hidden,
             num_relations=relation_channels,
@@ -145,8 +153,10 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
             sent[i, :n] = flat_sent[cursor : cursor + n]
             cursor += n
 
-        # The query anchor provides a common source row for evidence-set tasks.
-        units = torch.cat([query.unsqueeze(1), sent], dim=1)
+        # The no-goal ablation removes query information from unit selection,
+        # while the global answer head still receives the original text/query.
+        anchor = select_query_anchor(query, self.shared_anchor, self.use_goal_guidance)
+        units = torch.cat([anchor.unsqueeze(1), sent], dim=1)
         unit_mask = torch.cat(
             [torch.ones(bsz, 1, device=batch["mask"].device, dtype=torch.bool), batch["mask"]],
             dim=1,

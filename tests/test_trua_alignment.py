@@ -1,7 +1,13 @@
+import sys
+from pathlib import Path
+
 import torch
 
 from clutrr.models.relation_attention import RelationConditionedEntityAttention
 from clutrr.training.model_selection import stratified_train_validation_split
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from transformer_trua_prop import select_query_anchor
 
 
 def _dense_hop_scores(edges, unit_count):
@@ -42,3 +48,16 @@ def test_validation_split_is_fixed_and_stratified():
     assert validation_a.indices == validation_b.indices
     assert set(train_a.indices).isdisjoint(validation_a.indices)
     assert sorted(train_a.indices + validation_a.indices) == dataset
+
+
+def test_proposition_no_goal_uses_a_shared_query_free_anchor():
+    query = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    shared_anchor = torch.tensor([7.0, 8.0])
+
+    guided = select_query_anchor(query, shared_anchor, use_goal_guidance=True)
+    unguided = select_query_anchor(query, shared_anchor, use_goal_guidance=False)
+
+    assert guided is query
+    assert torch.equal(unguided, torch.tensor([[7.0, 8.0], [7.0, 8.0]]))
+    assert not torch.equal(unguided[0], query[0])
+    assert not torch.equal(unguided[1], query[1])
