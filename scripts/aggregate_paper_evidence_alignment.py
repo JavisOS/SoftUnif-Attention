@@ -43,8 +43,15 @@ def aggregate_group(group, items):
         tests = [payload["test"] for _, payload in items]
         row["kind"] = "clutrr"
         row["selected_epoch"] = mean_std([payload["selected_epoch"] for _, payload in items])
+        row["selected_validation"] = mean_std(
+            [payload["selected_validation_overall"] for _, payload in items]
+        )
         for metric in ("overall", "short_hop", "long_hop"):
             row[metric] = mean_std([test[metric] for test in tests])
+        for metric in ("renamed", "consistency", "consistent_and_correct"):
+            values = [test[metric] for test in tests if metric in test]
+            if values:
+                row[metric] = mean_std(values)
         hops = sorted({hop for test in tests for hop in test.get("per_hop", {})}, key=int)
         row["per_hop"] = {
             hop: mean_std([test["per_hop"][hop]["accuracy"] for test in tests if hop in test.get("per_hop", {})])
@@ -53,13 +60,23 @@ def aggregate_group(group, items):
     else:
         row["kind"] = "proposition"
         row["selected_epoch"] = mean_std([payload["selected_epoch"] for _, payload in items])
+        row["selected_validation"] = mean_std(
+            [payload["selected_validation_accuracy"] for _, payload in items]
+        )
         splits = sorted({split for _, payload in items for split in payload["results"]})
         row["splits"] = {}
         for split in splits:
             results = [payload["results"][split] for _, payload in items if split in payload["results"]]
+            depths = sorted({depth for result in results for depth in result.get("by_depth", {})}, key=int)
             row["splits"][split] = {
                 "accuracy": mean_std([result["accuracy"] for result in results]),
-                "trace_top1": mean_std([result["trace_top1"] for result in results]),
+                "evidence_at_1": mean_std([result["trace_top1"] for result in results]),
+                "by_depth": {
+                    depth: mean_std(
+                        [result["by_depth"][depth] for result in results if depth in result.get("by_depth", {})]
+                    )
+                    for depth in depths
+                },
             }
     return row
 
@@ -97,7 +114,7 @@ def markdown(rows):
         for split, metrics in row["splits"].items():
             lines.append(
                 f"| {row['group']} | {split} | {len(row['seeds'])} | {fmt(row['selected_epoch'])} | "
-                f"{fmt(metrics['accuracy'])} | {fmt(metrics['trace_top1'])} |"
+                f"{fmt(metrics['accuracy'])} | {fmt(metrics['evidence_at_1'])} |"
             )
     return "\n".join(lines) + "\n"
 
