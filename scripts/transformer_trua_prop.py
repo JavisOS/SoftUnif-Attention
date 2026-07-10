@@ -36,6 +36,11 @@ def select_query_anchor(query, shared_anchor, use_goal_guidance):
     return shared_anchor.unsqueeze(0).expand(query.size(0), -1)
 
 
+def validation_selection_key(metrics):
+    """Prefer answer accuracy, using evidence selection only to break ties."""
+    return float(metrics["accuracy"]), float(metrics["trace_top1"])
+
+
 class TextTraceDataset(Dataset):
     def __init__(self, samples, tokenizer, max_sents=12, max_len=160):
         self.samples = samples
@@ -237,7 +242,7 @@ def run(train, validation, tests, args):
         collate_fn=validation_ds.collate,
     )
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=1e-4)
-    best_validation = -1.0
+    best_validation_key = (-1.0, -1.0)
     best_epoch = -1
     best_state = None
     validation_history = []
@@ -260,8 +265,9 @@ def run(train, validation, tests, args):
             f"epoch={epoch+1} loss={total_loss / max(len(train_loader), 1):.4f} "
             f"validation_acc={validation_metrics['accuracy']:.4f}"
         )
-        if validation_metrics["accuracy"] > best_validation:
-            best_validation = validation_metrics["accuracy"]
+        validation_key = validation_selection_key(validation_metrics)
+        if validation_key > best_validation_key:
+            best_validation_key = validation_key
             best_epoch = epoch + 1
             best_state = clone_model_state(model)
     if best_state is None:
@@ -285,7 +291,9 @@ def run(train, validation, tests, args):
         "train": len(train),
         "validation": len(validation),
         "selected_epoch": best_epoch,
-        "selected_validation_accuracy": best_validation,
+        "selected_validation_accuracy": best_validation_key[0],
+        "selected_validation_evidence_at_1": best_validation_key[1],
+        "selection_rule": "validation accuracy; Evidence@1 breaks exact ties",
         "validation_history": validation_history,
         "architecture": {
             "relation_channels": args.relation_channels,

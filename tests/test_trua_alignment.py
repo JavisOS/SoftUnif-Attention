@@ -7,7 +7,7 @@ from clutrr.models.relation_attention import RelationConditionedEntityAttention
 from clutrr.training.model_selection import stratified_train_validation_split
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from transformer_trua_prop import select_query_anchor
+from transformer_trua_prop import select_query_anchor, validation_selection_key
 
 
 def _dense_hop_scores(edges, unit_count):
@@ -61,3 +61,12 @@ def test_proposition_no_goal_uses_a_shared_query_free_anchor():
     assert torch.equal(unguided, torch.tensor([[7.0, 8.0], [7.0, 8.0]]))
     assert not torch.equal(unguided[0], query[0])
     assert not torch.equal(unguided[1], query[1])
+
+
+def test_proposition_selection_uses_evidence_only_as_an_accuracy_tiebreaker():
+    higher_accuracy = {"accuracy": 0.9, "trace_top1": 0.1}
+    lower_accuracy = {"accuracy": 0.8, "trace_top1": 1.0}
+    same_accuracy_better_evidence = {"accuracy": 0.9, "trace_top1": 0.7}
+
+    assert validation_selection_key(higher_accuracy) > validation_selection_key(lower_accuracy)
+    assert validation_selection_key(same_accuracy_better_evidence) > validation_selection_key(higher_accuracy)
