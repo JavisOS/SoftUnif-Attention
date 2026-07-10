@@ -22,9 +22,9 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(SCRIPT_DIR))
 from clutrr.models.relation_attention import RelationConditionedEntityAttention
 from clutrr.models.trua_core import (
-    PROPOSITION_SEQUENCE_ADAPTER,
+    PROPOSITION_EVIDENCE_ADAPTER,
     TransitionRegularizedUnitAttentionCore,
-    masked_trace_distribution_loss,
+    masked_evidence_distribution_loss,
 )
 from clutrr.training.model_selection import clone_model_state, restore_model_state
 from generic_trua_prop import load_prontoqa, load_proofwriter, load_ruletaker_gfair, load_ruletaker_raw
@@ -38,10 +38,10 @@ def select_query_anchor(query, shared_anchor, use_goal_guidance):
 
 def validation_selection_key(metrics):
     """Prefer answer accuracy, using evidence selection only to break ties."""
-    return float(metrics["accuracy"]), float(metrics["trace_top1"])
+    return float(metrics["accuracy"]), float(metrics["evidence_at_1"])
 
 
-class TextTraceDataset(Dataset):
+class TextEvidenceDataset(Dataset):
     def __init__(self, samples, tokenizer, max_sents=12, max_len=160):
         self.samples = samples
         self.tokenizer = tokenizer
@@ -54,14 +54,14 @@ class TextTraceDataset(Dataset):
     def __getitem__(self, idx):
         x = self.samples[idx]
         sentences = (x["sentences"] or [x["context"][:300]])[: self.max_sents]
-        trace = (x["trace_labels"] or [0])[: self.max_sents]
-        if len(trace) < len(sentences):
-            trace = trace + [0] * (len(sentences) - len(trace))
+        evidence = (x["trace_labels"] or [0])[: self.max_sents]
+        if len(evidence) < len(sentences):
+            evidence = evidence + [0] * (len(sentences) - len(evidence))
         return {
             "text": x["context"] + " [SEP] " + x["query"],
             "query": x["query"],
             "sentences": sentences,
-            "trace": trace,
+            "evidence": evidence,
             "label": int(x.get("label", 1)),
             "depth": int(x.get("depth", -1)),
         }
@@ -78,12 +78,12 @@ class TextTraceDataset(Dataset):
         sents = tok(flat_sents, padding=True, truncation=True, max_length=96, return_tensors="pt")
         max_s = max(sent_lens)
         mask = torch.zeros(len(batch), max_s, dtype=torch.bool)
-        trace = torch.zeros(len(batch), max_s, dtype=torch.float32)
+        evidence = torch.zeros(len(batch), max_s, dtype=torch.float32)
         cursor = 0
         for i, x in enumerate(batch):
             n = sent_lens[i]
             mask[i, :n] = True
-            trace[i, :n] = torch.tensor(x["trace"][:n], dtype=torch.float32)
+            evidence[i, :n] = torch.tensor(x["evidence"][:n], dtype=torch.float32)
             cursor += n
         return {
             "text_ids": texts["input_ids"],
@@ -94,7 +94,7 @@ class TextTraceDataset(Dataset):
             "sent_mask": sents["attention_mask"],
             "sent_lens": torch.tensor(sent_lens, dtype=torch.long),
             "mask": mask,
-            "trace": trace,
+            "evidence": evidence,
             "label": torch.tensor([x["label"] for x in batch], dtype=torch.long),
             "depth": torch.tensor([x["depth"] for x in batch], dtype=torch.long),
         }
@@ -113,7 +113,7 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
         use_step_branch: bool = True,
     ):
         super().__init__()
-        self.adapter_spec = PROPOSITION_SEQUENCE_ADAPTER
+        self.adapter_spec = PROPOSITION_EVIDENCE_ADAPTER
         self.encoder = AutoModel.from_pretrained(model_name, local_files_only=True)
         hidden = self.encoder.config.hidden_size
         if freeze_encoder:
@@ -187,7 +187,7 @@ def move(batch, device):
 
 def evaluate(model, loader, device):
     model.eval()
-    correct = total = trace_hit = trace_total = 0
+    correct = total = evidence_hit = evidence_total = 0
     by_depth = defaultdict(lambda: [0, 0])
     with torch.no_grad():
         for batch in loader:
@@ -198,24 +198,24 @@ def evaluate(model, loader, device):
             total += pred.numel()
             top = scores.masked_fill(~batch["mask"], -1e4).argmax(-1)
             for i, j in enumerate(top.cpu().tolist()):
-                valid_trace = batch["trace"][i][batch["mask"][i]]
-                if valid_trace.sum().item() > 0:
-                    trace_total += 1
-                    trace_hit += int(batch["trace"][i, j].item() > 0)
+                valid_evidence = batch["evidence"][i][batch["mask"][i]]
+                if valid_evidence.sum().item() > 0:
+                    evidence_total += 1
+                    evidence_hit += int(batch["evidence"][i, j].item() > 0)
             for d, p, y in zip(batch["depth"].cpu().tolist(), pred.cpu().tolist(), batch["label"].cpu().tolist()):
                 by_depth[d][1] += 1
                 by_depth[d][0] += int(p == y)
     return {
         "accuracy": correct / max(total, 1),
         "total": total,
-        "trace_top1": trace_hit / max(trace_total, 1),
-        "trace_total": trace_total,
+        "evidence_at_1": evidence_hit / max(evidence_total, 1),
+        "evidence_total": evidence_total,
         "by_depth": {str(k): v[0] / max(v[1], 1) for k, v in sorted(by_depth.items())},
     }
 
 
-def trace_ce_loss(scores, mask, trace):
-    return masked_trace_distribution_loss(scores, mask, trace)
+def evidence_ce_loss(scores, mask, evidence):
+    return masked_evidence_distribution_loss(scores, mask, evidence)
 
 
 def run(train, validation, tests, args):
@@ -232,9 +232,9 @@ def run(train, validation, tests, args):
         use_aggregation_branch=args.use_aggregation_branch,
         use_step_branch=args.use_step_branch,
     ).to(device)
-    train_ds = TextTraceDataset(train, tokenizer, args.max_sents, args.max_len)
+    train_ds = TextEvidenceDataset(train, tokenizer, args.max_sents, args.max_len)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=train_ds.collate)
-    validation_ds = TextTraceDataset(validation, tokenizer, args.max_sents, args.max_len)
+    validation_ds = TextEvidenceDataset(validation, tokenizer, args.max_sents, args.max_len)
     validation_loader = DataLoader(
         validation_ds,
         batch_size=args.batch_size,
@@ -253,8 +253,12 @@ def run(train, validation, tests, args):
             batch = move(batch, device)
             logits, scores = model(batch)
             loss = nn.functional.cross_entropy(logits, batch["label"])
-            if args.lambda_trace > 0:
-                loss = loss + args.lambda_trace * trace_ce_loss(scores, batch["mask"], batch["trace"])
+            if args.lambda_evidence > 0:
+                loss = loss + args.lambda_evidence * evidence_ce_loss(
+                    scores,
+                    batch["mask"],
+                    batch["evidence"],
+                )
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -275,13 +279,13 @@ def run(train, validation, tests, args):
     restore_model_state(model, best_state)
     results = {}
     for name, samples in tests.items():
-        ds = TextTraceDataset(samples, tokenizer, args.max_sents, args.max_len)
+        ds = TextEvidenceDataset(samples, tokenizer, args.max_sents, args.max_len)
         loader = DataLoader(ds, batch_size=args.batch_size, collate_fn=ds.collate)
         results[name] = evaluate(model, loader, device)
     return {
         "dataset": args.dataset,
         "model_name": args.model_name,
-        "lambda_trace": args.lambda_trace,
+        "lambda_evidence": args.lambda_evidence,
         "seed": args.seed,
         "epochs": args.epochs,
         "train_depths": args.train_depths,
@@ -330,7 +334,13 @@ def main():
     parser.add_argument("--dataset", choices=["proofwriter", "ruletaker_gfair", "ruletaker_raw", "prontoqa"], required=True)
     parser.add_argument("--root", required=True)
     parser.add_argument("--model-name", default="microsoft/deberta-base")
-    parser.add_argument("--lambda-trace", type=float, default=1.0)
+    parser.add_argument(
+        "--lambda-evidence",
+        "--lambda-trace",
+        dest="lambda_evidence",
+        type=float,
+        default=1.0,
+    )
     parser.add_argument("--train-depths", default="0,1,2")
     parser.add_argument("--test-depths", default="3,5")
     parser.add_argument("--train-qdeps", default="")

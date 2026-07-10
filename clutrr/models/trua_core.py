@@ -1,8 +1,8 @@
 """Shared TRUA core utilities.
 
 The task-specific adapters decide what a reasoning unit is (an entity, fact,
-rule, proposition, or sentence).  The core only provides common pooling,
-query-conditioned unit features, and trace-supervision losses.
+rule, proposition, or sentence). The core provides common pooling,
+query-conditioned unit features, and intermediate-supervision losses.
 """
 
 from __future__ import annotations
@@ -17,24 +17,28 @@ import torch.nn as nn
 class ReasoningAdapterSpec:
     name: str
     unit_type: str
-    trace_type: str
+    supervision_type: str
 
 
 ENTITY_PATH_ADAPTER = ReasoningAdapterSpec(
     name="entity_path",
     unit_type="entity",
-    trace_type="path_node_sequence",
+    supervision_type="ordered_path",
 )
 
-PROPOSITION_SEQUENCE_ADAPTER = ReasoningAdapterSpec(
-    name="proposition_sequence",
+PROPOSITION_EVIDENCE_ADAPTER = ReasoningAdapterSpec(
+    name="proposition_evidence",
     unit_type="fact_rule_or_proposition",
-    trace_type="proof_step_sequence",
+    supervision_type="evidence_set",
 )
+
+# Kept for exploratory scripts written before proposition supervision was
+# correctly distinguished from an ordered proof sequence.
+PROPOSITION_SEQUENCE_ADAPTER = PROPOSITION_EVIDENCE_ADAPTER
 
 
 class TransitionRegularizedUnitAttentionCore(nn.Module):
-    """Mixin-style core for trace-supervised reasoning models.
+    """Mixin-style core for reasoning models with optional intermediate labels.
 
     Subclasses provide encoder modules and task heads.  This class deliberately
     avoids dataset assumptions beyond span/unit tensors and masks.
@@ -128,13 +132,19 @@ class TransitionRegularizedUnitAttentionCore(nn.Module):
         )
 
 
-def masked_trace_distribution_loss(scores, mask, trace):
-    """Cross entropy against one or more gold trace units per example."""
+def masked_evidence_distribution_loss(scores, mask, evidence):
+    """Cross entropy against a uniform distribution over marked evidence units."""
 
-    has_trace = (trace * mask.float()).sum(dim=1) > 0
-    if not has_trace.any():
+    has_evidence = (evidence * mask.float()).sum(dim=1) > 0
+    if not has_evidence.any():
         return scores.new_tensor(0.0)
-    masked_scores = scores[has_trace].masked_fill(~mask[has_trace], -1e4)
-    target = trace[has_trace] * mask[has_trace].float()
+    masked_scores = scores[has_evidence].masked_fill(~mask[has_evidence], -1e4)
+    target = evidence[has_evidence] * mask[has_evidence].float()
     target = target / target.sum(dim=1, keepdim=True).clamp_min(1.0)
     return -(target * torch.log_softmax(masked_scores, dim=-1)).sum(dim=-1).mean()
+
+
+def masked_trace_distribution_loss(scores, mask, trace):
+    """Backward-compatible alias for older proposition experiment scripts."""
+
+    return masked_evidence_distribution_loss(scores, mask, trace)

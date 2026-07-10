@@ -4,6 +4,7 @@ from pathlib import Path
 import torch
 
 from clutrr.models.relation_attention import RelationConditionedEntityAttention
+from clutrr.models.trua_core import ENTITY_PATH_ADAPTER, PROPOSITION_EVIDENCE_ADAPTER
 from clutrr.training.model_selection import stratified_train_validation_split
 from clutrr.training.robustness import _count_reference_transition_hits
 
@@ -65,9 +66,9 @@ def test_proposition_no_goal_uses_a_shared_query_free_anchor():
 
 
 def test_proposition_selection_uses_evidence_only_as_an_accuracy_tiebreaker():
-    higher_accuracy = {"accuracy": 0.9, "trace_top1": 0.1}
-    lower_accuracy = {"accuracy": 0.8, "trace_top1": 1.0}
-    same_accuracy_better_evidence = {"accuracy": 0.9, "trace_top1": 0.7}
+    higher_accuracy = {"accuracy": 0.9, "evidence_at_1": 0.1}
+    lower_accuracy = {"accuracy": 0.8, "evidence_at_1": 1.0}
+    same_accuracy_better_evidence = {"accuracy": 0.9, "evidence_at_1": 0.7}
 
     assert validation_selection_key(higher_accuracy) > validation_selection_key(lower_accuracy)
     assert validation_selection_key(same_accuracy_better_evidence) > validation_selection_key(higher_accuracy)
@@ -97,3 +98,8 @@ def test_transition_at_one_counts_each_reference_path_edge():
 
     assert hits == 2
     assert total == 3
+
+
+def test_adapter_specs_distinguish_paths_from_evidence_sets():
+    assert ENTITY_PATH_ADAPTER.supervision_type == "ordered_path"
+    assert PROPOSITION_EVIDENCE_ADAPTER.supervision_type == "evidence_set"
