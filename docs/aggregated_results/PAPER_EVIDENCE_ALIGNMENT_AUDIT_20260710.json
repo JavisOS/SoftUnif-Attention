@@ -1,0 +1,19 @@
+{
+  "audited_at": "2026-07-11T03:00:37",
+  "errors": [],
+  "expected_groups": 17,
+  "expected_revision": "64f8ae0a7b0757bd6c05d1ac1c1402c10c622eba",
+  "expected_tasks": 51,
+  "observed_groups": 17,
+  "observed_revisions": [
+    "64f8ae0a7b0757bd6c05d1ac1c1402c10c622eba"
+  ],
+  "observed_tasks": 51,
+  "passed": true,
+  "run_root": "/vepfs/trua_outputs/paper_evidence_alignment/main_20260710",
+  "seeds": [
+    0,
+    1,
+    42
+  ]
+}
