@@ -28,6 +28,7 @@ DATASETS = {
         "root": "/root/TRUA/data/proofwriter/raw/proofwriter-dataset-V2020.12.3",
         "extra": ("--train-depths", "0,1,2", "--test-depths", "3,5"),
         "max_sentences": 32,
+        "labels": ("false", "true", "unknown"),
     },
     "ruletaker": {
         "dataset": "ruletaker_raw",
@@ -43,6 +44,7 @@ DATASETS = {
             "1,2,3,4,5",
         ),
         "max_sentences": 32,
+        "labels": ("false", "true"),
     },
 }
 
@@ -165,7 +167,7 @@ def command_for(
     return command
 
 
-def valid_result(path: Path) -> bool:
+def valid_result(path: Path, expected_labels: tuple[str, ...]) -> bool:
     if not path.exists():
         return False
     try:
@@ -173,7 +175,15 @@ def valid_result(path: Path) -> bool:
     except (OSError, json.JSONDecodeError):
         return False
     tests = result.get("results")
-    return isinstance(tests, dict) and bool(tests)
+    labels = result.get("task_labels", {}).get("id_to_name", {})
+    observed_labels = tuple(
+        labels.get(str(index)) for index in range(len(expected_labels))
+    )
+    return (
+        isinstance(tests, dict)
+        and bool(tests)
+        and observed_labels == expected_labels
+    )
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -270,6 +280,10 @@ def main() -> None:
                 "self_attention": [],
                 "trua": ["query_anchor", "explicit_goal_term"],
             },
+            "task_labels": {
+                dataset_name: list(DATASETS[dataset_name]["labels"])
+                for dataset_name in args.datasets
+            },
         },
         "jobs": [],
     }
@@ -281,12 +295,25 @@ def main() -> None:
                 "core": job["core"],
                 "seed": job["seed"],
                 "metrics": str(job["metrics_path"]),
-                "status": "complete" if valid_result(job["metrics_path"]) else "pending",
+                "status": (
+                    "complete"
+                    if valid_result(
+                        job["metrics_path"],
+                        DATASETS[job["dataset"]]["labels"],
+                    )
+                    else "pending"
+                ),
             }
         )
     write_json(output_root / "manifest.json", manifest)
 
-    pending = [job for job in jobs if not valid_result(job["metrics_path"])]
+    pending = [
+        job
+        for job in jobs
+        if not valid_result(
+            job["metrics_path"], DATASETS[job["dataset"]]["labels"]
+        )
+    ]
     if args.dry_run:
         print(
             json.dumps(
@@ -354,7 +381,9 @@ def main() -> None:
             if return_code is None:
                 continue
             job["log_handle"].close()
-            complete = return_code == 0 and valid_result(job["metrics_path"])
+            complete = return_code == 0 and valid_result(
+                job["metrics_path"], DATASETS[job["dataset"]]["labels"]
+            )
             print(
                 f"finished gpu={gpu} dataset={job['dataset']} "
                 f"backbone={job['backbone']} core={job['core']} "
@@ -398,7 +427,11 @@ def main() -> None:
     manifest["failures"] = failures
     for record in manifest["jobs"]:
         record["status"] = (
-            "complete" if valid_result(Path(record["metrics"])) else "failed"
+            "complete"
+            if valid_result(
+                Path(record["metrics"]), DATASETS[record["dataset"]]["labels"]
+            )
+            else "failed"
         )
     write_json(output_root / "manifest.json", manifest)
     if failures:

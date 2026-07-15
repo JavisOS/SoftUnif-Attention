@@ -30,10 +30,22 @@ def _split_sentences(text: str):
     return [s.strip() for s in _SENT_RE.split(text.replace("$query$", " ")) if s.strip()]
 
 
-def _label(answer):
+PROOFWRITER_LABEL_NAMES = ("false", "true", "unknown")
+BINARY_LABEL_NAMES = ("false", "true")
+
+
+def _binary_label(answer):
     if isinstance(answer, bool):
         return int(answer)
     return int(str(answer).strip().lower() in {"true", "yes", "1", "entailment"})
+
+
+def _proofwriter_label(answer):
+    normalized = str(answer).strip().lower()
+    labels = {"false": 0, "true": 1, "unknown": 2}
+    if normalized not in labels:
+        raise ValueError(f"Unsupported ProofWriter OWA answer: {answer!r}")
+    return labels[normalized]
 
 
 def _proof_ids(question):
@@ -48,7 +60,14 @@ def _first_existing(candidates):
     return next((path for path in candidates if path.exists()), None)
 
 
-def _load_meta_depth_dirs(depth_dirs, split: str, limit=None, qdep_filter=None):
+def _load_meta_depth_dirs(
+    depth_dirs,
+    split: str,
+    limit=None,
+    qdep_filter=None,
+    answer_encoder=_binary_label,
+    no_evidence_labels=(),
+):
     qdep_filter = set(qdep_filter) if qdep_filter is not None else None
     samples = []
     for depth_dir in depth_dirs:
@@ -72,7 +91,8 @@ def _load_meta_depth_dirs(depth_dirs, split: str, limit=None, qdep_filter=None):
                 depth = int(q.get("QDep", item.get("maxD", -1)))
                 if qdep_filter is not None and depth not in qdep_filter:
                     continue
-                ids = _proof_ids(q)
+                label = answer_encoder(q.get("answer"))
+                ids = set() if label in no_evidence_labels else _proof_ids(q)
                 trace = [1 if key in ids else 0 for key, _ in sent_items]
                 samples.append(
                     {
@@ -81,7 +101,7 @@ def _load_meta_depth_dirs(depth_dirs, split: str, limit=None, qdep_filter=None):
                         "query": q.get("question", ""),
                         "sentences": sentences or _split_sentences(context),
                         "trace_labels": trace,
-                        "label": _label(q.get("answer")),
+                        "label": label,
                         "depth": depth,
                     }
                 )
@@ -95,7 +115,13 @@ def load_proofwriter(root: Path, depths, split: str, limit=None):
         selected = _first_existing(candidates)
         if selected is not None:
             depth_dirs.append(selected)
-    return _load_meta_depth_dirs(depth_dirs, split, limit)
+    return _load_meta_depth_dirs(
+        depth_dirs,
+        split,
+        limit,
+        answer_encoder=_proofwriter_label,
+        no_evidence_labels=(2,),
+    )
 
 
 def load_ruletaker_raw(root: Path, depth_dirs, split: str, limit=None, qdeps=None):
@@ -135,7 +161,7 @@ def load_ruletaker_gfair(root: Path, split: str, limit=None):
                     "query": query.strip(),
                     "sentences": sentences,
                     "trace_labels": trace,
-                    "label": _label(item.get("answer")),
+                    "label": _binary_label(item.get("answer")),
                     "depth": int(m.group(1)) if m else -1,
                 }
             )
@@ -177,7 +203,7 @@ def load_prontoqa(root: Path, files, limit=None):
                     "query": query,
                     "sentences": sentences,
                     "trace_labels": trace,
-                    "label": _label(item.get("answer", True)),
+                    "label": _binary_label(item.get("answer", True)),
                     "depth": hop,
                 }
             )

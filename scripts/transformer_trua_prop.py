@@ -11,7 +11,7 @@ import platform
 import random
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import torch
@@ -33,7 +33,14 @@ from clutrr.models.trua_core import (
     masked_evidence_distribution_loss,
 )
 from clutrr.training.model_selection import clone_model_state, repository_revision, restore_model_state
-from generic_trua_prop import load_prontoqa, load_proofwriter, load_ruletaker_gfair, load_ruletaker_raw
+from generic_trua_prop import (
+    BINARY_LABEL_NAMES,
+    PROOFWRITER_LABEL_NAMES,
+    load_prontoqa,
+    load_proofwriter,
+    load_ruletaker_gfair,
+    load_ruletaker_raw,
+)
 
 
 def select_query_anchor(query, shared_anchor, use_query_anchor):
@@ -70,13 +77,25 @@ def sample_fingerprint(samples):
 def split_record(samples):
     examples = len(samples)
     evidence_examples = sum(bool(sum(sample.get("trace_labels") or [])) for sample in samples)
-    positives = sum(int(sample.get("label", 0)) for sample in samples)
+    label_counts = Counter(int(sample.get("label", 0)) for sample in samples)
+    is_binary = set(label_counts).issubset({0, 1})
     return {
         "examples": examples,
         "sha256": sample_fingerprint(samples),
-        "positive_fraction": positives / max(examples, 1),
+        "label_counts": {
+            str(label): count for label, count in sorted(label_counts.items())
+        },
+        "positive_fraction": (
+            label_counts[1] / max(examples, 1) if is_binary else None
+        ),
         "evidence_fraction": evidence_examples / max(examples, 1),
     }
+
+
+def label_names_for_dataset(dataset):
+    if dataset == "proofwriter":
+        return PROOFWRITER_LABEL_NAMES
+    return BINARY_LABEL_NAMES
 
 
 def complete_input_limits(dataset, max_sentences, max_context_tokens, allow_truncation=False):
@@ -163,6 +182,7 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
         use_step_branch: bool = True,
         use_query_anchor: bool | None = None,
         core_type: str = "trua",
+        num_labels: int = 2,
     ):
         super().__init__()
         if core_type not in {"encoder", "trua", "self_attention"}:
@@ -178,6 +198,13 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
             use_goal_guidance if use_query_anchor is None else use_query_anchor
         ) if core_type != "encoder" else False
         self.core_type = core_type
+        self.use_relation_conditioning = (
+            use_relation_conditioning if core_type == "trua" else False
+        )
+        self.use_aggregation_branch = (
+            use_aggregation_branch if core_type == "trua" else False
+        )
+        self.use_step_branch = use_step_branch if core_type == "trua" else False
         if core_type != "encoder":
             self.sent_proj = nn.Linear(hidden, hidden)
             self.query_proj = nn.Linear(hidden, hidden)
@@ -202,7 +229,7 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
             nn.Linear(hidden if core_type == "encoder" else hidden * 2, hidden),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden, 2),
+            nn.Linear(hidden, num_labels),
         )
 
     def encode_cls(self, input_ids, attention_mask):
@@ -259,10 +286,12 @@ def move(batch, device):
     return out
 
 
-def evaluate(model, loader, device):
+def evaluate(model, loader, device, label_names):
     model.eval()
     correct = total = evidence_hit = evidence_total = 0
     by_depth = defaultdict(lambda: [0, 0])
+    by_label = defaultdict(lambda: [0, 0])
+    confusion = torch.zeros(len(label_names), len(label_names), dtype=torch.long)
     with torch.no_grad():
         for batch in loader:
             batch = move(batch, device)
@@ -270,6 +299,10 @@ def evaluate(model, loader, device):
             pred = logits.argmax(-1)
             correct += (pred == batch["label"]).sum().item()
             total += pred.numel()
+            for p, y in zip(pred.cpu().tolist(), batch["label"].cpu().tolist()):
+                by_label[y][1] += 1
+                by_label[y][0] += int(p == y)
+                confusion[y, p] += 1
             if scores is not None:
                 top = scores.masked_fill(~batch["mask"], -1e4).argmax(-1)
                 for i, j in enumerate(top.cpu().tolist()):
@@ -290,6 +323,22 @@ def evaluate(model, loader, device):
             str(k): {"correct": v[0], "total": v[1]}
             for k, v in sorted(by_depth.items())
         },
+        "by_label": {
+            label_names[label]: by_label[label][0] / max(by_label[label][1], 1)
+            for label in range(len(label_names))
+        },
+        "by_label_counts": {
+            label_names[label]: {
+                "correct": by_label[label][0],
+                "total": by_label[label][1],
+            }
+            for label in range(len(label_names))
+        },
+        "macro_label_accuracy": sum(
+            by_label[label][0] / max(by_label[label][1], 1)
+            for label in range(len(label_names))
+        ) / len(label_names),
+        "confusion_matrix": confusion.tolist(),
     }
 
 
@@ -299,6 +348,7 @@ def evidence_ce_loss(scores, mask, evidence):
 
 def run(train, validation, tests, args):
     code_revision = repository_revision()
+    label_names = label_names_for_dataset(args.dataset)
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, local_files_only=True)
@@ -313,6 +363,7 @@ def run(train, validation, tests, args):
         use_step_branch=args.use_step_branch,
         use_query_anchor=args.use_query_anchor,
         core_type=args.core_type,
+        num_labels=len(label_names),
     ).to(device)
     total_parameters = sum(parameter.numel() for parameter in model.parameters())
     trainable_parameters = sum(
@@ -373,7 +424,7 @@ def run(train, validation, tests, args):
             loss.backward()
             opt.step()
             total_loss += loss.item()
-        validation_metrics = evaluate(model, validation_loader, device)
+        validation_metrics = evaluate(model, validation_loader, device, label_names)
         validation_history.append({"epoch": epoch + 1, **validation_metrics})
         print(
             f"epoch={epoch+1} loss={total_loss / max(len(train_loader), 1):.4f} "
@@ -397,7 +448,7 @@ def run(train, validation, tests, args):
     for name, samples in tests.items():
         ds = TextEvidenceDataset(samples, tokenizer, args.max_sents, args.max_len)
         loader = DataLoader(ds, batch_size=args.batch_size, collate_fn=ds.collate)
-        results[name] = evaluate(model, loader, device)
+        results[name] = evaluate(model, loader, device, label_names)
     if device.type == "cuda":
         torch.cuda.synchronize(device)
     test_seconds = time.perf_counter() - test_started_at
@@ -409,6 +460,12 @@ def run(train, validation, tests, args):
     return {
         "code_revision": code_revision,
         "dataset": args.dataset,
+        "task_labels": {
+            "num_labels": len(label_names),
+            "id_to_name": {
+                str(index): name for index, name in enumerate(label_names)
+            },
+        },
         "model_name": args.model_name,
         "lambda_evidence": args.lambda_evidence,
         "seed": args.seed,
@@ -448,11 +505,11 @@ def run(train, validation, tests, args):
         "architecture": {
             "core_type": args.core_type,
             "relation_channels": args.relation_channels,
-            "use_relation_conditioning": args.use_relation_conditioning,
-            "use_goal_guidance": args.use_goal_guidance,
+            "use_relation_conditioning": model.use_relation_conditioning,
+            "use_goal_guidance": model.use_goal_guidance,
             "use_query_anchor": model.use_query_anchor,
-            "use_aggregation_branch": args.use_aggregation_branch,
-            "use_step_branch": args.use_step_branch,
+            "use_aggregation_branch": model.use_aggregation_branch,
+            "use_step_branch": model.use_step_branch,
         },
         "randomness": {
             "model_initialization_seed": args.seed,
