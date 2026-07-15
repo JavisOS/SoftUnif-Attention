@@ -90,8 +90,29 @@ class TruaBatchCollator:
         path_rel_ids = torch.full((len(batch), max_rel_len), -1, dtype=torch.long)
 
         max_entities = max([b["num_nodes"] for b in batch])
+        max_mentions = max(
+            1,
+            max(
+                (
+                    len(mention_spans)
+                    for b in batch
+                    for mention_spans in b.get("node_mention_spans", [])
+                ),
+                default=0,
+            ),
+        )
         entity_spans = torch.full((len(batch), max_entities, 2), -1, dtype=torch.long)
+        entity_mention_spans = torch.full(
+            (len(batch), max_entities, max_mentions, 2),
+            -1,
+            dtype=torch.long,
+        )
         aug_entity_spans = torch.full((len(batch), max_entities, 2), -1, dtype=torch.long)
+        aug_entity_mention_spans = torch.full(
+            (len(batch), max_entities, max_mentions, 2),
+            -1,
+            dtype=torch.long,
+        )
 
         for i, b in enumerate(batch):
             p_len = len(b["path_indices"])
@@ -108,6 +129,10 @@ class TruaBatchCollator:
                 if span is not None:
                     entity_spans[i, j, 0] = span[0]
                     entity_spans[i, j, 1] = span[1]
+            for j, mention_spans in enumerate(b.get("node_mention_spans", [])):
+                for k, span in enumerate(mention_spans[:max_mentions]):
+                    entity_mention_spans[i, j, k, 0] = span[0]
+                    entity_mention_spans[i, j, k, 1] = span[1]
 
             if "aug_node_spans" in b:
                 aug_spans = b["aug_node_spans"]
@@ -115,6 +140,10 @@ class TruaBatchCollator:
                     if span is not None:
                         aug_entity_spans[i, j, 0] = span[0]
                         aug_entity_spans[i, j, 1] = span[1]
+                for j, mention_spans in enumerate(b.get("aug_node_mention_spans", [])):
+                    for k, span in enumerate(mention_spans[:max_mentions]):
+                        aug_entity_mention_spans[i, j, k, 0] = span[0]
+                        aug_entity_mention_spans[i, j, k, 1] = span[1]
 
         return {
             "input_ids": enc.input_ids,
@@ -124,9 +153,11 @@ class TruaBatchCollator:
             "path_node_ids": path_node_ids,
             "path_rel_ids": path_rel_ids,
             "entity_spans": entity_spans,
+            "entity_mention_spans": entity_mention_spans,
             "query_indices": query_indices,
             "raw_batch": batch,
             "aug_input_ids": enc_aug.input_ids if enc_aug else None,
             "aug_attention_mask": enc_aug.attention_mask if enc_aug else None,
             "aug_entity_spans": aug_entity_spans if enc_aug else None,
+            "aug_entity_mention_spans": aug_entity_mention_spans if enc_aug else None,
         }
