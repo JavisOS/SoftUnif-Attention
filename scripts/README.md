@@ -14,6 +14,10 @@ Primary entry points:
 - `run_proofwriter_query_controls.py`: three-seed ProofWriter controls that
   separate explicit goal injection, the query-anchor route, and matched
   content self-attention.
+- `run_counterfactual_clutrr_control.py`: validation-selected, three-seed
+  CLUTRR control for CREST-inspired rename/reverse-query augmentation. This is
+  explicitly an adapted shortcut-mitigation control, not an official CREST
+  reproduction.
 - `run_prop_deberta_seed1_gpu7_retry.sh`: current seed-1 10-epoch retry queue
   for non-CLUTRR datasets.
 - `run_additional_depth_seed_checks.sh`: follow-up depth/seed queue covering
