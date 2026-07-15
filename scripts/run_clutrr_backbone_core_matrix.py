@@ -206,10 +206,19 @@ def main() -> None:
         "gpus": args.gpus,
         "protocol": {
             "epochs": args.epochs,
+            "training_hops": [2, 3],
+            "test_hops": list(range(2, 11)),
             "validation_fraction": 0.1,
             "validation_seed": 2027,
             "checkpoint_selection": "validation_accuracy",
             "test_evaluations_per_run": 1,
+            "entity_pooling": {
+                "cli_value": "multi_mention",
+                "definition": (
+                    "mean subwords within each textual occurrence, then mean "
+                    "all occurrences of the same entity"
+                ),
+            },
             "matched_unit_objectives": {
                 "self_attention_matched": ["transition", "edge"],
                 "trua": ["transition", "edge"],
