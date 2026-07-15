@@ -100,7 +100,7 @@ def command_for(
         "--validation_seed",
         "2027",
         "--entity_pooling",
-        "multi_mention",
+        "mean",
         "--gpus",
         str(gpu),
         "--metrics_out",
@@ -213,10 +213,10 @@ def main() -> None:
             "checkpoint_selection": "validation_accuracy",
             "test_evaluations_per_run": 1,
             "entity_pooling": {
-                "cli_value": "multi_mention",
+                "cli_value": "mean",
                 "definition": (
-                    "mean subwords within each textual occurrence, then mean "
-                    "all occurrences of the same entity"
+                    "mean the aligned subwords within the first textual "
+                    "occurrence of each entity"
                 ),
             },
             "matched_unit_objectives": {
