@@ -9,6 +9,11 @@ Primary entry points:
 - `formal_trua_10ep_supervisor.sh`: formal 10-epoch TRUA/label-only queue.
 - `transformer_trua_prop.py`: DeBERTa/RoBERTa-style TRUA-Prop runner for
   ProofWriter, RuleTaker, and PrOntoQA.
+- `run_controlled_clutrr_baselines.py`: same-protocol encoder, content
+  self-attention, MAC-style, and RCA-style CLUTRR controls.
+- `run_proofwriter_query_controls.py`: three-seed ProofWriter controls that
+  separate explicit goal injection, the query-anchor route, and matched
+  content self-attention.
 - `run_prop_deberta_seed1_gpu7_retry.sh`: current seed-1 10-epoch retry queue
   for non-CLUTRR datasets.
 - `run_additional_depth_seed_checks.sh`: follow-up depth/seed queue covering
