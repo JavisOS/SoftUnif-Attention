@@ -58,6 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--entity_pooling", default="mean", choices=["mean", "multi_mention", "query_aware"])
     parser.add_argument("--pair_feature_mode", default="product", choices=["product", "product_diff"])
     parser.add_argument("--mac_steps", type=int, default=4)
+    parser.add_argument("--lambda_transition", type=float, default=0.0)
+    parser.add_argument("--lambda_edge", type=float, default=0.0)
     parser.add_argument("--gpus", default="0")
     parser.add_argument("--metrics_out", required=True)
     return parser
@@ -65,6 +67,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run_training() -> None:
     args = build_parser().parse_args()
+    if args.core_type == "self_attention_matched":
+        if args.lambda_transition == 0.0 and args.lambda_edge == 0.0:
+            raise ValueError("self_attention_matched requires a nonzero matched objective")
+    elif args.lambda_transition != 0.0 or args.lambda_edge != 0.0:
+        raise ValueError("Matched objectives require --core_type self_attention_matched")
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpus)
     set_seed(args.seed)
 
@@ -130,6 +137,8 @@ def run_training() -> None:
         entity_pooling=args.entity_pooling,
         pair_feature_mode=args.pair_feature_mode,
         mac_steps=args.mac_steps,
+        lambda_transition=args.lambda_transition,
+        lambda_edge=args.lambda_edge,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
@@ -236,7 +245,9 @@ def run_training() -> None:
             "pair_feature_mode": args.pair_feature_mode,
             "mac_steps": args.mac_steps if args.core_type == "mac" else None,
             "renamed_view_training": True,
-            "path_or_edge_supervision": False,
+            "path_or_edge_supervision": args.lambda_transition != 0.0 or args.lambda_edge != 0.0,
+            "lambda_transition": args.lambda_transition,
+            "lambda_edge": args.lambda_edge,
         },
     }
     write_metrics(args.metrics_out, result)
