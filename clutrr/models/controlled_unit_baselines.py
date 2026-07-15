@@ -169,7 +169,6 @@ class ControlledClutrrBaseline(TransitionRegularizedUnitAttentionCore):
         model_type: str = "deberta",
         model_name_or_path: str | None = None,
         pooling: str | None = None,
-        entity_pooling: str = "mean",
         pair_feature_mode: str = "product",
         mac_steps: int = 4,
         lambda_transition: float = 0.0,
@@ -178,8 +177,6 @@ class ControlledClutrrBaseline(TransitionRegularizedUnitAttentionCore):
         super().__init__()
         if core_type not in self.SUPPORTED_CORES:
             raise ValueError(f"Unsupported controlled core: {core_type}")
-        if entity_pooling not in {"mean", "multi_mention", "query_aware"}:
-            raise ValueError(f"Unsupported entity pooling: {entity_pooling}")
         if pair_feature_mode not in {"product", "product_diff"}:
             raise ValueError(f"Unsupported pair features: {pair_feature_mode}")
 
@@ -189,7 +186,6 @@ class ControlledClutrrBaseline(TransitionRegularizedUnitAttentionCore):
         self.model_type = model_type.lower()
         self.decoder_only = is_decoder_only_model(self.model_type)
         self.pooling = pooling or ("last_token" if self.decoder_only else "cls")
-        self.entity_pooling = entity_pooling
         self.pair_feature_mode = pair_feature_mode
         self.lambda_transition = lambda_transition
         self.lambda_edge = lambda_edge
@@ -209,10 +205,6 @@ class ControlledClutrrBaseline(TransitionRegularizedUnitAttentionCore):
                 nn.Linear(self.hidden_size * 3, self.hidden_size),
                 nn.Tanh(),
             )
-            self.mention_key_proj = nn.Linear(self.hidden_size, self.hidden_size)
-            self.mention_query_proj = nn.Linear(self.hidden_size, self.hidden_size)
-            self.mention_score = nn.Linear(self.hidden_size, 1)
-
             pair_feature_dim = self.hidden_size * (4 if pair_feature_mode == "product_diff" else 3)
             self.pair_classifier = nn.Sequential(
                 nn.Linear(pair_feature_dim, self.hidden_size),
@@ -288,7 +280,6 @@ class ControlledClutrrBaseline(TransitionRegularizedUnitAttentionCore):
         attention_mask,
         entity_spans,
         query_indices,
-        entity_mention_spans=None,
         path_node_ids=None,
     ):
         del path_node_ids
@@ -300,12 +291,7 @@ class ControlledClutrrBaseline(TransitionRegularizedUnitAttentionCore):
         if self.unit_core is None:
             return logits_cls, None, None
 
-        units = self.get_entity_embeddings(
-            sequence,
-            entity_spans,
-            query_indices,
-            entity_mention_spans=entity_mention_spans,
-        )
+        units = self.get_entity_embeddings(sequence, entity_spans)
         valid_mask = entity_spans[:, :, 0] != -1
         query = self._build_query_context(units, query_indices)
         if self.core_type == "self_attention_matched":
@@ -343,7 +329,6 @@ class ControlledClutrrBaseline(TransitionRegularizedUnitAttentionCore):
             attention_mask=batch_data["attention_mask"],
             entity_spans=batch_data["entity_spans"],
             query_indices=batch_data["query_indices"],
-            entity_mention_spans=batch_data.get("entity_mention_spans"),
         )
         loss = nn.functional.cross_entropy(logits, batch_data["labels"])
 
@@ -353,7 +338,6 @@ class ControlledClutrrBaseline(TransitionRegularizedUnitAttentionCore):
                 attention_mask=batch_data["aug_attention_mask"],
                 entity_spans=batch_data["aug_entity_spans"],
                 query_indices=batch_data["query_indices"],
-                entity_mention_spans=batch_data.get("aug_entity_mention_spans"),
             )
             augmented_loss = nn.functional.cross_entropy(augmented_logits, batch_data["labels"])
             loss = 0.5 * (loss + augmented_loss)

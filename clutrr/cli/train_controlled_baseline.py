@@ -55,7 +55,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--validation_seed", type=int, default=2027)
     parser.add_argument("--train_data_percentage", type=int, default=100)
     parser.add_argument("--test_data_percentage", type=int, default=100)
-    parser.add_argument("--entity_pooling", default="mean", choices=["mean", "multi_mention", "query_aware"])
     parser.add_argument("--pair_feature_mode", default="product", choices=["product", "product_diff"])
     parser.add_argument("--mac_steps", type=int, default=4)
     parser.add_argument("--lambda_transition", type=float, default=0.0)
@@ -134,7 +133,6 @@ def run_training() -> None:
         core_type=args.core_type,
         model_type=args.model_type,
         model_name_or_path=args.model_name_or_path,
-        entity_pooling=args.entity_pooling,
         pair_feature_mode=args.pair_feature_mode,
         mac_steps=args.mac_steps,
         lambda_transition=args.lambda_transition,
@@ -241,7 +239,6 @@ def run_training() -> None:
             "lr": args.lr,
             "batch_size": args.batch_size,
             "eval_batch_size": args.eval_batch_size,
-            "entity_pooling": args.entity_pooling,
             "pair_feature_mode": args.pair_feature_mode,
             "mac_steps": args.mac_steps if args.core_type == "mac" else None,
             "renamed_view_training": True,

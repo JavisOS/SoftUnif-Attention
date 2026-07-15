@@ -5,11 +5,7 @@ from pathlib import Path
 import torch
 
 from clutrr.models.relation_attention import RelationConditionedEntityAttention
-from clutrr.models.trua_core import (
-    ENTITY_PATH_ADAPTER,
-    PROPOSITION_EVIDENCE_ADAPTER,
-    TransitionRegularizedUnitAttentionCore,
-)
+from clutrr.models.trua_core import ENTITY_PATH_ADAPTER, PROPOSITION_EVIDENCE_ADAPTER
 from clutrr.training.model_selection import stratified_train_validation_split
 from clutrr.training.robustness import _count_reference_transition_hits
 
@@ -113,25 +109,6 @@ def test_transition_at_one_counts_each_reference_path_edge():
 def test_adapter_specs_distinguish_paths_from_evidence_sets():
     assert ENTITY_PATH_ADAPTER.supervision_type == "ordered_path"
     assert PROPOSITION_EVIDENCE_ADAPTER.supervision_type == "evidence_set"
-
-
-def test_multi_occurrence_pooling_averages_all_aligned_spans():
-    core = TransitionRegularizedUnitAttentionCore()
-    core.entity_pooling = "multi_mention"
-    sequence = torch.tensor([[[0.0], [2.0], [0.0], [6.0], [10.0], [0.0]]])
-    first_spans = torch.tensor([[[1, 2], [4, 5]]])
-    occurrence_spans = torch.tensor(
-        [[[[1, 2], [3, 4]], [[4, 5], [-1, -1]]]]
-    )
-
-    pooled = core.get_unit_embeddings_from_spans(
-        sequence,
-        first_spans,
-        torch.tensor([[0, 1]]),
-        unit_mention_spans=occurrence_spans,
-    )
-
-    assert torch.equal(pooled, torch.tensor([[[4.0], [10.0]]]))
 
 
 def test_proposition_defaults_preserve_complete_paper_inputs():

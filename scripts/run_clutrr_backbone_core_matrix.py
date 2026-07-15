@@ -99,8 +99,6 @@ def command_for(
         "0.1",
         "--validation_seed",
         "2027",
-        "--entity_pooling",
-        "mean",
         "--gpus",
         str(gpu),
         "--metrics_out",
@@ -212,13 +210,10 @@ def main() -> None:
             "validation_seed": 2027,
             "checkpoint_selection": "validation_accuracy",
             "test_evaluations_per_run": 1,
-            "entity_pooling": {
-                "cli_value": "mean",
-                "definition": (
-                    "mean the aligned subwords within the first textual "
-                    "occurrence of each entity"
-                ),
-            },
+            "entity_unit_grounding": (
+                "mean the aligned subwords within the first textual "
+                "occurrence of each entity"
+            ),
             "matched_unit_objectives": {
                 "self_attention_matched": ["transition", "edge"],
                 "trua": ["transition", "edge"],

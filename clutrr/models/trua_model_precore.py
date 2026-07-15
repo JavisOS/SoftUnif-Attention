@@ -20,7 +20,6 @@ class TruaReasonerModelPreCore(nn.Module):
         lora_alpha=32,
         lora_dropout=0.05,
         pooling=None,
-        entity_pooling="mean",
         prediction_head="cls_pair",
         consistency_mode="kl",
         use_relation_conditioning=True,
@@ -44,8 +43,6 @@ class TruaReasonerModelPreCore(nn.Module):
         self.model_type = model_type.lower()
         self.decoder_only = is_decoder_only_model(self.model_type)
         self.pooling = pooling or ("last_token" if self.decoder_only else "cls")
-        if entity_pooling not in {"mean", "multi_mention", "query_aware"}:
-            raise ValueError(f"Unsupported entity_pooling mode: {entity_pooling}")
         if prediction_head not in {"cls_pair", "cls_only", "pair_only", "gated"}:
             raise ValueError(f"Unsupported prediction_head mode: {prediction_head}")
         if consistency_mode not in {"kl", "sym_kl", "js", "mse"}:
@@ -55,7 +52,6 @@ class TruaReasonerModelPreCore(nn.Module):
         if pair_feature_mode not in {"product", "product_diff"}:
             raise ValueError(f"Unsupported pair_feature_mode: {pair_feature_mode}")
 
-        self.entity_pooling = entity_pooling
         self.prediction_head = prediction_head
         self.consistency_mode = consistency_mode
         self.edge_supervision_target = edge_supervision_target
@@ -110,13 +106,6 @@ class TruaReasonerModelPreCore(nn.Module):
         self.register_buffer("rel_comp_prior", comp_prior)
         self.register_buffer("inverse_pairs", torch.tensor(spouse_inverse_pairs, dtype=torch.long))
         self.residual_gate_logit = nn.Parameter(torch.tensor(float(residual_gate_init)))
-        self.query_ctx_proj = nn.Sequential(
-            nn.Linear(self.hidden_size * 3, self.hidden_size),
-            nn.Tanh(),
-        )
-        self.mention_key_proj = nn.Linear(self.hidden_size, self.hidden_size)
-        self.mention_query_proj = nn.Linear(self.hidden_size, self.hidden_size)
-        self.mention_score = nn.Linear(self.hidden_size, 1)
 
     def _pair_features(self, e_src, e_dst):
         features = [e_src, e_dst, e_src * e_dst]
@@ -152,43 +141,8 @@ class TruaReasonerModelPreCore(nn.Module):
         pooled = pooled * valid_mask.unsqueeze(-1).to(pooled.dtype)
         return pooled.reshape(*original_shape, last_hidden_state.size(-1))
 
-    def _build_query_context(self, base_entity_embs, query_indices):
-        max_entities = base_entity_embs.size(1)
-        sub_idx = query_indices[:, 0].clamp(min=0, max=max_entities - 1)
-        obj_idx = query_indices[:, 1].clamp(min=0, max=max_entities - 1)
-        b_idx = torch.arange(base_entity_embs.size(0), device=base_entity_embs.device)
-        e_sub = base_entity_embs[b_idx, sub_idx]
-        e_obj = base_entity_embs[b_idx, obj_idx]
-        return self.query_ctx_proj(torch.cat([e_sub, e_obj, e_sub * e_obj], dim=-1))
-
-    @staticmethod
-    def _aggregate_mentions_mean(mention_embs, mention_mask):
-        mention_mask_f = mention_mask.unsqueeze(-1).to(mention_embs.dtype)
-        mention_counts = mention_mask_f.sum(dim=2).clamp(min=1.0)
-        return (mention_embs * mention_mask_f).sum(dim=2) / mention_counts
-
-    def _aggregate_mentions_query_aware(self, mention_embs, mention_mask, query_indices):
-        base_entity_embs = self._aggregate_mentions_mean(mention_embs, mention_mask)
-        query_ctx = self._build_query_context(base_entity_embs, query_indices)
-        mention_keys = self.mention_key_proj(mention_embs)
-        query_bias = self.mention_query_proj(query_ctx).unsqueeze(1).unsqueeze(2)
-        mention_scores = self.mention_score(torch.tanh(mention_keys + query_bias)).squeeze(-1)
-        mention_scores = mention_scores.masked_fill(~mention_mask, -1e4)
-
-        attn = torch.softmax(mention_scores, dim=-1)
-        attn = attn * mention_mask.to(attn.dtype)
-        attn = attn / attn.sum(dim=-1, keepdim=True).clamp(min=1e-6)
-        return (attn.unsqueeze(-1) * mention_embs).sum(dim=2)
-
-    def get_entity_embeddings(self, last_hidden_state, entity_spans, query_indices, entity_mention_spans=None):
-        if self.entity_pooling == "mean" or entity_mention_spans is None:
-            return self._pool_spans(last_hidden_state, entity_spans)
-
-        mention_mask = entity_mention_spans[:, :, :, 0] != -1
-        mention_embs = self._pool_spans(last_hidden_state, entity_mention_spans)
-        if self.entity_pooling == "multi_mention":
-            return self._aggregate_mentions_mean(mention_embs, mention_mask)
-        return self._aggregate_mentions_query_aware(mention_embs, mention_mask, query_indices)
+    def get_entity_embeddings(self, last_hidden_state, entity_spans):
+        return self._pool_spans(last_hidden_state, entity_spans)
 
     def _build_forced_edge_index(self, path_node_ids, max_entities):
         if path_node_ids is None:
@@ -218,7 +172,6 @@ class TruaReasonerModelPreCore(nn.Module):
         attention_mask,
         entity_spans,
         query_indices,
-        entity_mention_spans=None,
         path_node_ids=None,
     ):
         out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
@@ -229,12 +182,7 @@ class TruaReasonerModelPreCore(nn.Module):
         cls_output = self._pool_sequence(sequence_for_heads, attention_mask)
         logits_cls = self.classifier(cls_output)
 
-        entity_embs = self.get_entity_embeddings(
-            sequence_for_heads,
-            entity_spans,
-            query_indices,
-            entity_mention_spans=entity_mention_spans,
-        )
+        entity_embs = self.get_entity_embeddings(sequence_for_heads, entity_spans)
         valid_mask = entity_spans[:, :, 0] != -1
         forced_edges = None
         if self.training and self.force_gold_edges:
@@ -533,7 +481,6 @@ class TruaReasonerModelPreCore(nn.Module):
         attention_mask = batch_data["attention_mask"]
         labels = batch_data["labels"]
         entity_spans = batch_data["entity_spans"]
-        entity_mention_spans = batch_data.get("entity_mention_spans")
         path_node_ids = batch_data["path_node_ids"]
         path_rel_ids = batch_data.get("path_rel_ids")
         query_indices = batch_data["query_indices"]
@@ -543,7 +490,6 @@ class TruaReasonerModelPreCore(nn.Module):
             attention_mask=attention_mask,
             entity_spans=entity_spans,
             query_indices=query_indices,
-            entity_mention_spans=entity_mention_spans,
             path_node_ids=path_node_ids,
         )
         main_loss = nn.functional.cross_entropy(logits_orig, labels)
@@ -555,7 +501,6 @@ class TruaReasonerModelPreCore(nn.Module):
                 attention_mask=batch_data["aug_attention_mask"],
                 entity_spans=batch_data["aug_entity_spans"],
                 query_indices=query_indices,
-                entity_mention_spans=batch_data.get("aug_entity_mention_spans"),
                 path_node_ids=path_node_ids,
             )
             loss_aug_ce = nn.functional.cross_entropy(logits_aug, labels)

@@ -21,7 +21,6 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
         lora_alpha=32,
         lora_dropout=0.05,
         pooling=None,
-        entity_pooling="mean",
         prediction_head="cls_pair",
         consistency_mode="kl",
         use_relation_conditioning=True,
@@ -49,8 +48,6 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
         self.model_type = model_type.lower()
         self.decoder_only = is_decoder_only_model(self.model_type)
         self.pooling = pooling or ("last_token" if self.decoder_only else "cls")
-        if entity_pooling not in {"mean", "multi_mention", "query_aware"}:
-            raise ValueError(f"Unsupported entity_pooling mode: {entity_pooling}")
         if prediction_head not in {"cls_pair", "cls_only", "pair_only", "gated"}:
             raise ValueError(f"Unsupported prediction_head mode: {prediction_head}")
         if consistency_mode not in {"kl", "sym_kl", "js", "mse"}:
@@ -60,7 +57,6 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
         if pair_feature_mode not in {"product", "product_diff"}:
             raise ValueError(f"Unsupported pair_feature_mode: {pair_feature_mode}")
 
-        self.entity_pooling = entity_pooling
         self.prediction_head = prediction_head
         self.consistency_mode = consistency_mode
         self.edge_supervision_target = edge_supervision_target
@@ -118,13 +114,6 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
         self.register_buffer("rel_comp_prior", comp_prior)
         self.register_buffer("inverse_pairs", torch.tensor(spouse_inverse_pairs, dtype=torch.long))
         self.residual_gate_logit = nn.Parameter(torch.tensor(float(residual_gate_init)))
-        self.query_ctx_proj = nn.Sequential(
-            nn.Linear(self.hidden_size * 3, self.hidden_size),
-            nn.Tanh(),
-        )
-        self.mention_key_proj = nn.Linear(self.hidden_size, self.hidden_size)
-        self.mention_query_proj = nn.Linear(self.hidden_size, self.hidden_size)
-        self.mention_score = nn.Linear(self.hidden_size, 1)
 
     def _build_forced_edge_index(self, path_node_ids, max_entities):
         if path_node_ids is None:
@@ -154,7 +143,6 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
         attention_mask,
         entity_spans,
         query_indices,
-        entity_mention_spans=None,
         path_node_ids=None,
     ):
         out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
@@ -165,12 +153,7 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
         cls_output = self._pool_sequence(sequence_for_heads, attention_mask)
         logits_cls = self.classifier(cls_output)
 
-        entity_embs = self.get_entity_embeddings(
-            sequence_for_heads,
-            entity_spans,
-            query_indices,
-            entity_mention_spans=entity_mention_spans,
-        )
+        entity_embs = self.get_entity_embeddings(sequence_for_heads, entity_spans)
         valid_mask = entity_spans[:, :, 0] != -1
         forced_edges = None
         if self.training and self.force_gold_edges:
@@ -469,7 +452,6 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
         attention_mask = batch_data["attention_mask"]
         labels = batch_data["labels"]
         entity_spans = batch_data["entity_spans"]
-        entity_mention_spans = batch_data.get("entity_mention_spans")
         path_node_ids = batch_data["path_node_ids"]
         path_rel_ids = batch_data.get("path_rel_ids")
         query_indices = batch_data["query_indices"]
@@ -479,7 +461,6 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
             attention_mask=attention_mask,
             entity_spans=entity_spans,
             query_indices=query_indices,
-            entity_mention_spans=entity_mention_spans,
             path_node_ids=path_node_ids,
         )
         main_loss = nn.functional.cross_entropy(logits_orig, labels)
@@ -491,7 +472,6 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
                 attention_mask=batch_data["aug_attention_mask"],
                 entity_spans=batch_data["aug_entity_spans"],
                 query_indices=query_indices,
-                entity_mention_spans=batch_data.get("aug_entity_mention_spans"),
                 path_node_ids=path_node_ids,
             )
             loss_aug_ce = nn.functional.cross_entropy(logits_aug, labels)

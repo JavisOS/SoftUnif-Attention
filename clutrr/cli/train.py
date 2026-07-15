@@ -56,7 +56,6 @@ BASE_TRAIN_DEFAULTS = {
     "lora_alpha": 32,
     "lora_dropout": 0.05,
     "pooling": None,
-    "entity_pooling": "mean",
     "prediction_head": "cls_pair",
     "consistency_mode": "kl",
     "use_relation_conditioning": True,
@@ -292,13 +291,6 @@ def build_arg_parser(defaults=None):
         help="Sequence pooling strategy for classifier head. Default picks model-specific strategy.",
     )
     parser.add_argument(
-        "--entity_pooling",
-        type=str,
-        default=defaults["entity_pooling"],
-        choices=["mean", "multi_mention", "query_aware"],
-        help="Entity representation mode before relation attention.",
-    )
-    parser.add_argument(
         "--prediction_head",
         type=str,
         default=defaults["prediction_head"],
@@ -446,7 +438,7 @@ def run_training():
         print(f"Strategy: {args.strategy} (rank={rank}, world_size={world_size}, local_rank={local_rank})")
         print(
             "Diagnostics: "
-            f"entity_pooling={args.entity_pooling}, prediction_head={args.prediction_head}, "
+            f"prediction_head={args.prediction_head}, "
             f"relation_conditioning={args.use_relation_conditioning}, "
             f"goal_guidance={args.use_goal_guidance}, aggregation_branch={args.use_aggregation_branch}, "
             f"step_branch={args.use_step_branch}, "
@@ -530,7 +522,6 @@ def run_training():
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
         pooling=args.pooling,
-        entity_pooling=args.entity_pooling,
         prediction_head=args.prediction_head,
         consistency_mode=args.consistency_mode,
         use_relation_conditioning=args.use_relation_conditioning,

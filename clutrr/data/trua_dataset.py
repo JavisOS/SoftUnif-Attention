@@ -72,23 +72,13 @@ class TruaClutrrDataset(CLUTRRDataset):
         alignments = align_entity_spans_to_tokens(story_str, all_names, self.tokenizer)
 
         node_spans = []
-        node_mention_spans = []
         valid_sample = True
         for name_idx, name in enumerate(all_names):
             res = alignments.get(name)
             if res and res["token_span"]:
                 node_spans.append(res["token_span"])
-                node_mention_spans.append(
-                    [
-                        occurrence["token_span"]
-                        for occurrence in res.get("all_occurrences", [])
-                        if occurrence.get("token_span") is not None
-                    ]
-                    or [res["token_span"]]
-                )
             else:
                 node_spans.append(None)
-                node_mention_spans.append([])
                 if name_idx in graph_info["path_node_indices"]:
                     valid_sample = False
 
@@ -108,7 +98,6 @@ class TruaClutrrDataset(CLUTRRDataset):
             "path_indices": graph_info["path_node_indices"],
             "path_rel_labels": path_rel_labels,
             "node_spans": node_spans,
-            "node_mention_spans": node_mention_spans,
             "num_nodes": len(all_names),
             "hops": official_hop_count(row),
             "reference_path_hops": len(graph_info["path_node_indices"]) - 1,
@@ -131,23 +120,13 @@ class TruaClutrrDataset(CLUTRRDataset):
 
                 aug_alignments = align_entity_spans_to_tokens(aug_story, aug_all_names, self.tokenizer)
                 aug_node_spans = []
-                aug_node_mention_spans = []
                 valid_aug = True
                 for j, name in enumerate(aug_all_names):
                     res = aug_alignments.get(name)
                     if res and res["token_span"]:
                         aug_node_spans.append(res["token_span"])
-                        aug_node_mention_spans.append(
-                            [
-                                occurrence["token_span"]
-                                for occurrence in res.get("all_occurrences", [])
-                                if occurrence.get("token_span") is not None
-                            ]
-                            or [res["token_span"]]
-                        )
                     else:
                         aug_node_spans.append(None)
-                        aug_node_mention_spans.append([])
                         if graph_info["path_node_indices"].count(j) > 0:
                             valid_aug = False
                 if not valid_aug:
@@ -156,17 +135,14 @@ class TruaClutrrDataset(CLUTRRDataset):
                 item["aug_story"] = aug_story
                 item["aug_query"] = aug_query
                 item["aug_node_spans"] = aug_node_spans
-                item["aug_node_mention_spans"] = aug_node_mention_spans
             else:
                 item["aug_story"] = story_str
                 item["aug_query"] = query
                 item["aug_node_spans"] = node_spans
-                item["aug_node_mention_spans"] = node_mention_spans
         else:
             item["aug_story"] = story_str
             item["aug_query"] = query
             item["aug_node_spans"] = node_spans
-            item["aug_node_mention_spans"] = node_mention_spans
 
         return item, None
 

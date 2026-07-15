@@ -20,7 +20,6 @@ lambda_consistency: 5.0
 sparse_top_k: 8
 force_gold_edges: true
 
-entity_pooling: mean
 prediction_head: cls_pair
 edge_supervision_target: latent
 pair_feature_mode: product
