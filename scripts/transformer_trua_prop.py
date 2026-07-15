@@ -8,6 +8,7 @@ import json
 import math
 import random
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -264,6 +265,13 @@ def run(train, validation, tests, args):
         use_query_anchor=args.use_query_anchor,
         core_type=args.core_type,
     ).to(device)
+    total_parameters = sum(parameter.numel() for parameter in model.parameters())
+    trainable_parameters = sum(
+        parameter.numel() for parameter in model.parameters() if parameter.requires_grad
+    )
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+    run_started_at = time.perf_counter()
     train_ds = TextEvidenceDataset(train, tokenizer, args.max_sents, args.max_len)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=train_ds.collate)
     validation_ds = TextEvidenceDataset(validation, tokenizer, args.max_sents, args.max_len)
@@ -314,6 +322,12 @@ def run(train, validation, tests, args):
         ds = TextEvidenceDataset(samples, tokenizer, args.max_sents, args.max_len)
         loader = DataLoader(ds, batch_size=args.batch_size, collate_fn=ds.collate)
         results[name] = evaluate(model, loader, device)
+    wall_time_seconds = time.perf_counter() - run_started_at
+    peak_cuda_memory_gib = (
+        torch.cuda.max_memory_allocated(device) / (1024**3)
+        if device.type == "cuda"
+        else 0.0
+    )
     return {
         "code_revision": code_revision,
         "dataset": args.dataset,
@@ -334,6 +348,13 @@ def run(train, validation, tests, args):
         "selected_validation_accuracy": best_validation_key[0],
         "selected_validation_evidence_at_1": best_validation_key[1],
         "selection_rule": "validation accuracy; Evidence@1 breaks exact ties",
+        "resources": {
+            "device": str(device),
+            "total_parameters": total_parameters,
+            "trainable_parameters": trainable_parameters,
+            "wall_time_seconds": wall_time_seconds,
+            "peak_cuda_memory_gib": peak_cuda_memory_gib,
+        },
         "validation_history": validation_history,
         "architecture": {
             "core_type": args.core_type,
