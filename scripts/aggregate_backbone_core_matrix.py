@@ -15,7 +15,7 @@ CORES = ("encoder", "self_attention", "trua")
 CORE_ALIASES = {"self_attention_matched": "self_attention"}
 METHOD_LABELS = {
     "encoder": "Encoder",
-    "self_attention": "Content self-attention",
+    "self_attention": "Content-only unit attention",
     "trua": "TRUA",
 }
 
@@ -262,7 +262,7 @@ def render_markdown(rows: list[dict]) -> str:
     lines.extend(
         [
             "",
-            "Encoder rows use answer labels only and do not expose a unit-selection score. Content self-attention and TRUA use the same task-available transition/evidence regularization.",
+            "Encoder rows use answer labels only and do not expose a unit-selection score. Content-only unit attention and TRUA use the same task-available transition/evidence regularization; only TRUA conditions unit selection on the query goal.",
             "",
         ]
     )

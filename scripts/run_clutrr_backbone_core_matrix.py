@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the validation-selected CLUTRR backbone/core comparison matrix."""
+"""Run the declared-checkpoint CLUTRR backbone/core comparison matrix."""
 
 from __future__ import annotations
 
@@ -58,6 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--eval-batch-size", type=int, default=32)
+    parser.add_argument(
+        "--checkpoint-selection",
+        choices=("validation", "final"),
+        default="final",
+    )
+    parser.add_argument("--validation-fraction", type=float, default=0.0)
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -76,6 +82,8 @@ def command_for(
     epochs: int,
     batch_size: int,
     eval_batch_size: int,
+    checkpoint_selection: str,
+    validation_fraction: float,
     metrics_path: Path,
 ) -> list[str]:
     common = [
@@ -96,9 +104,11 @@ def command_for(
         "--seed",
         str(seed),
         "--validation_fraction",
-        "0.1",
+        str(validation_fraction),
         "--validation_seed",
         "2027",
+        "--checkpoint_selection",
+        checkpoint_selection,
         "--gpus",
         str(gpu),
         "--metrics_out",
@@ -193,7 +203,7 @@ def main() -> None:
 
     manifest = {
         "started_at_utc": datetime.now(timezone.utc).isoformat(),
-        "scope": "clutrr_backbone_core_matrix_validation_selected",
+        "scope": "clutrr_backbone_core_matrix_declared_checkpoint",
         "dataset": args.dataset,
         "backbones": [
             {"name": name, "model_type": model_type, "model_path": model_path}
@@ -206,9 +216,9 @@ def main() -> None:
             "epochs": args.epochs,
             "training_hops": [2, 3],
             "test_hops": list(range(2, 11)),
-            "validation_fraction": 0.1,
+            "validation_fraction": args.validation_fraction,
             "validation_seed": 2027,
-            "checkpoint_selection": "validation_accuracy",
+            "checkpoint_selection": args.checkpoint_selection,
             "test_evaluations_per_run": 1,
             "entity_unit_grounding": (
                 "mean the aligned subwords within the first textual "
@@ -234,6 +244,8 @@ def main() -> None:
             epochs=args.epochs,
             batch_size=args.batch_size,
             eval_batch_size=args.eval_batch_size,
+            checkpoint_selection=args.checkpoint_selection,
+            validation_fraction=args.validation_fraction,
             metrics_path=job["metrics_path"],
         )
         manifest["jobs"].append(
@@ -283,6 +295,8 @@ def main() -> None:
                 epochs=args.epochs,
                 batch_size=args.batch_size,
                 eval_batch_size=args.eval_batch_size,
+                checkpoint_selection=args.checkpoint_selection,
+                validation_fraction=args.validation_fraction,
                 metrics_path=job["metrics_path"],
             )
             log_handle = log_path.open("w", encoding="utf-8")

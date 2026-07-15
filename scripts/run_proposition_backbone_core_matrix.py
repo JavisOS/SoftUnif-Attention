@@ -145,7 +145,7 @@ def command_for(
         *specification["extra"],
     ]
     if core == "self_attention":
-        command.extend(["--no-use-goal-guidance", "--use-query-anchor"])
+        command.extend(["--no-use-goal-guidance", "--no-use-query-anchor"])
     elif core == "trua":
         command.extend(["--use-goal-guidance", "--use-query-anchor"])
     return command
@@ -239,6 +239,11 @@ def main() -> None:
                 "encoder": 0.0,
                 "self_attention": 1.0,
                 "trua": 1.0,
+            },
+            "selection_query_routes": {
+                "encoder": [],
+                "self_attention": [],
+                "trua": ["query_anchor", "explicit_goal_term"],
             },
         },
         "jobs": [],

@@ -6,6 +6,15 @@ models should stay under `/vepfs` and are ignored by git.
 
 Primary entry points:
 
+- `run_clutrr_backbone_core_matrix.py`: BERT/RoBERTa/DeBERTa-v3 comparison
+  of the encoder, objective-matched content-only unit attention, and TRUA under
+  a declared checkpoint protocol.
+- `run_proposition_backbone_core_matrix.py`: the corresponding ProofWriter and
+  RuleTaker backbone/core matrix; the content-only control receives the same
+  evidence objective as TRUA but no query route in unit selection.
+- `run_clutrr_protocol_audit.py`: controlled full/held-out and
+  final/validation checkpoint audit used to reconcile historical CLUTRR
+  scores with the current protocol.
 - `formal_trua_10ep_supervisor.sh`: formal 10-epoch TRUA/label-only queue.
 - `transformer_trua_prop.py`: DeBERTa/RoBERTa-style TRUA-Prop runner for
   ProofWriter, RuleTaker, and PrOntoQA.

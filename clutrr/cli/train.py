@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 import torch
@@ -74,6 +75,7 @@ BASE_TRAIN_DEFAULTS = {
     "use_step_branch": True,
     "validation_fraction": 0.1,
     "validation_seed": 2027,
+    "checkpoint_selection": "validation",
     "metrics_out": None,
     "train_data_percentage": 100,
     "test_data_percentage": 100,
@@ -246,6 +248,16 @@ def build_arg_parser(defaults=None):
         help="Fixed seed for the train/validation partition; independent of the model seed.",
     )
     parser.add_argument(
+        "--checkpoint_selection",
+        choices=["validation", "final"],
+        default=defaults["checkpoint_selection"],
+        help=(
+            "Select the checkpoint by held-out validation accuracy or use the "
+            "pre-specified final epoch. Final-epoch selection permits a zero "
+            "validation fraction so all training examples are used."
+        ),
+    )
+    parser.add_argument(
         "--metrics_out",
         type=str,
         default=defaults["metrics_out"],
@@ -412,6 +424,11 @@ def run_training():
     args = parse_training_args()
     code_revision = repository_revision()
 
+    if not 0.0 <= args.validation_fraction < 1.0:
+        raise ValueError("validation_fraction must be in [0, 1)")
+    if args.checkpoint_selection == "validation" and args.validation_fraction == 0.0:
+        raise ValueError("validation checkpoint selection requires validation_fraction > 0")
+
     if args.gpus is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpus)
 
@@ -464,17 +481,22 @@ def run_training():
         augment=True,
     )
     full_train_ds.data = [d for d in full_train_ds.data if d is not None]
-    train_strata = [(item["hops"], item["target_id"]) for item in full_train_ds.data]
-    train_ds, validation_ds = stratified_train_validation_split(
-        full_train_ds,
-        train_strata,
-        validation_fraction=args.validation_fraction,
-        seed=args.validation_seed,
-    )
-    print(
-        f"Train/validation split: {len(train_ds)}/{len(validation_ds)} "
-        f"(fraction={args.validation_fraction}, seed={args.validation_seed})"
-    )
+    if args.validation_fraction > 0.0:
+        train_strata = [(item["hops"], item["target_id"]) for item in full_train_ds.data]
+        train_ds, validation_ds = stratified_train_validation_split(
+            full_train_ds,
+            train_strata,
+            validation_fraction=args.validation_fraction,
+            seed=args.validation_seed,
+        )
+        print(
+            f"Train/validation split: {len(train_ds)}/{len(validation_ds)} "
+            f"(fraction={args.validation_fraction}, seed={args.validation_seed})"
+        )
+    else:
+        train_ds = full_train_ds
+        validation_ds = None
+        print(f"Training on all {len(train_ds)} examples; no validation split")
 
     test_ds = TruaClutrrDataset(
         root,
@@ -496,13 +518,15 @@ def run_training():
         collate_fn=collator,
         num_workers=args.num_workers,
     )
-    validation_loader = DataLoader(
-        validation_ds,
-        batch_size=args.eval_batch_size,
-        shuffle=False,
-        collate_fn=collator,
-        num_workers=args.num_workers,
-    )
+    validation_loader = None
+    if validation_ds is not None:
+        validation_loader = DataLoader(
+            validation_ds,
+            batch_size=args.eval_batch_size,
+            shuffle=False,
+            collate_fn=collator,
+            num_workers=args.num_workers,
+        )
     test_loader = DataLoader(
         test_ds,
         batch_size=args.eval_batch_size,
@@ -565,8 +589,16 @@ def run_training():
         )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    total_parameters = sum(parameter.numel() for parameter in model.parameters())
+    trainable_parameters = sum(
+        parameter.numel() for parameter in model.parameters() if parameter.requires_grad
+    )
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+        torch.cuda.synchronize(device)
+    training_start = time.perf_counter()
     print("Starting Training...")
-    best_validation = -1.0
+    best_validation = None
     best_epoch = -1
     best_state = None
     validation_history = []
@@ -636,21 +668,61 @@ def run_training():
                 f"Eq: {accum_eq / len(train_loader):.4f})"
             )
 
-        if _is_main_process():
+        if _is_main_process() and validation_loader is not None:
             validation_metrics = evaluate_robustness(model, validation_loader, device)
             validation_history.append({"epoch": epoch + 1, **validation_metrics})
             print(f"  Validation Overall:  {validation_metrics['overall']:.4f}")
-            if validation_metrics["overall"] > best_validation:
+            if (
+                args.checkpoint_selection == "validation"
+                and (best_validation is None or validation_metrics["overall"] > best_validation)
+            ):
                 best_validation = validation_metrics["overall"]
                 best_epoch = epoch + 1
                 best_state = clone_model_state(model)
 
-    if best_state is None:
-        raise RuntimeError("No validation checkpoint was selected")
-    restore_model_state(model, best_state)
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    training_seconds = time.perf_counter() - training_start
+    peak_memory_gib = (
+        torch.cuda.max_memory_allocated(device) / (1024**3)
+        if device.type == "cuda"
+        else 0.0
+    )
+
+    if args.checkpoint_selection == "validation":
+        if best_state is None:
+            raise RuntimeError("No validation checkpoint was selected")
+        restore_model_state(model, best_state)
+        selection_message = (
+            f"Selected Validation Epoch: {best_epoch} "
+            f"(overall={best_validation:.4f})"
+        )
+        test_message = "--> Test Evaluation (checkpoint selected on validation only)"
+    else:
+        best_epoch = args.epochs
+        if validation_history:
+            best_validation = validation_history[-1]["overall"]
+        selection_message = f"Selected pre-specified final epoch: {best_epoch}"
+        test_message = "--> Test Evaluation (one evaluation after the fixed schedule)"
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    test_start = time.perf_counter()
     test_metrics = evaluate_robustness(model, test_loader, device)
-    print(f"Selected Validation Epoch: {best_epoch} (overall={best_validation:.4f})")
-    print("--> Test Evaluation (checkpoint selected on validation only)")
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    test_seconds = time.perf_counter() - test_start
+    resource_usage = {
+        "total_parameters": total_parameters,
+        "trainable_parameters": trainable_parameters,
+        "peak_allocated_memory_gib": peak_memory_gib,
+        "training_seconds": training_seconds,
+        "test_seconds": test_seconds,
+        "training_examples_per_second": (
+            len(train_ds) * args.epochs / max(training_seconds, 1e-9)
+        ),
+    }
+    print(selection_message)
+    print(test_message)
     print(f"  Overall Acc (Base):   {test_metrics['overall']:.4f}")
     print(f"  Renamed Acc (Mod):    {test_metrics['renamed']:.4f}")
     print(f"  Consistency:          {test_metrics['consistency']:.4f}")
@@ -672,14 +744,16 @@ def run_training():
             "model_type": args.model_type,
             "seed": args.seed,
             "train_size": len(train_ds),
-            "validation_size": len(validation_ds),
+            "validation_size": len(validation_ds) if validation_ds is not None else 0,
             "test_size": len(test_ds),
             "validation_fraction": args.validation_fraction,
             "validation_seed": args.validation_seed,
+            "checkpoint_selection": args.checkpoint_selection,
             "selected_epoch": best_epoch,
             "selected_validation_overall": best_validation,
             "validation_history": validation_history,
             "test": test_metrics,
+            "resource_usage": resource_usage,
             "configuration": {
                 "lambda_nexthop": args.lambda_nexthop,
                 "lambda_edge": args.lambda_edge,

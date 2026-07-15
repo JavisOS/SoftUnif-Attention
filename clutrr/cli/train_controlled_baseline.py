@@ -1,4 +1,4 @@
-"""Train validation-selected controlled baselines under the final CLUTRR protocol."""
+"""Train controlled baselines under a declared CLUTRR checkpoint protocol."""
 
 from __future__ import annotations
 
@@ -53,6 +53,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--validation_fraction", type=float, default=0.1)
     parser.add_argument("--validation_seed", type=int, default=2027)
+    parser.add_argument(
+        "--checkpoint_selection",
+        choices=("validation", "final"),
+        default="validation",
+    )
     parser.add_argument("--train_data_percentage", type=int, default=100)
     parser.add_argument("--test_data_percentage", type=int, default=100)
     parser.add_argument("--pair_feature_mode", default="product", choices=["product", "product_diff"])
@@ -66,6 +71,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run_training() -> None:
     args = build_parser().parse_args()
+    if not 0.0 <= args.validation_fraction < 1.0:
+        raise ValueError("validation_fraction must be in [0, 1)")
+    if args.checkpoint_selection == "validation" and args.validation_fraction == 0.0:
+        raise ValueError("validation checkpoint selection requires validation_fraction > 0")
     if args.core_type == "self_attention_matched":
         if args.lambda_transition == 0.0 and args.lambda_edge == 0.0:
             raise ValueError("self_attention_matched requires a nonzero matched objective")
@@ -86,13 +95,17 @@ def run_training() -> None:
         augment=True,
     )
     full_train.data = [item for item in full_train.data if item is not None]
-    strata = [(item["hops"], item["target_id"]) for item in full_train.data]
-    train_data, validation_data = stratified_train_validation_split(
-        full_train,
-        strata,
-        validation_fraction=args.validation_fraction,
-        seed=args.validation_seed,
-    )
+    if args.validation_fraction > 0.0:
+        strata = [(item["hops"], item["target_id"]) for item in full_train.data]
+        train_data, validation_data = stratified_train_validation_split(
+            full_train,
+            strata,
+            validation_fraction=args.validation_fraction,
+            seed=args.validation_seed,
+        )
+    else:
+        train_data = full_train
+        validation_data = None
     test_data = TruaClutrrDataset(
         args.root,
         args.dataset,
@@ -112,13 +125,15 @@ def run_training() -> None:
         collate_fn=collator,
         num_workers=args.num_workers,
     )
-    validation_loader = DataLoader(
-        validation_data,
-        batch_size=args.eval_batch_size,
-        shuffle=False,
-        collate_fn=collator,
-        num_workers=args.num_workers,
-    )
+    validation_loader = None
+    if validation_data is not None:
+        validation_loader = DataLoader(
+            validation_data,
+            batch_size=args.eval_batch_size,
+            shuffle=False,
+            collate_fn=collator,
+            num_workers=args.num_workers,
+        )
     test_loader = DataLoader(
         test_data,
         batch_size=args.eval_batch_size,
@@ -147,14 +162,16 @@ def run_training() -> None:
         torch.cuda.synchronize(device)
     training_start = time.perf_counter()
 
-    best_validation = -1.0
+    best_validation = None
     best_epoch = -1
     best_state = None
     validation_history = []
 
     print(
         f"Controlled baseline: core={args.core_type}, seed={args.seed}, "
-        f"train/validation/test={len(train_data)}/{len(validation_data)}/{len(test_data)}"
+        "train/validation/test="
+        f"{len(train_data)}/{len(validation_data) if validation_data is not None else 0}/"
+        f"{len(test_data)}; checkpoint={args.checkpoint_selection}"
     )
     for epoch in range(args.epochs):
         model.train()
@@ -171,22 +188,28 @@ def run_training() -> None:
             epoch_loss += float(output["loss"].item())
             batches += 1
 
-        validation_metrics = evaluate_robustness(model, validation_loader, device)
-        validation_history.append(
-            {
-                "epoch": epoch + 1,
-                "train_loss": epoch_loss / max(batches, 1),
-                **validation_metrics,
-            }
-        )
-        print(
-            f"Epoch {epoch + 1:02d}: loss={epoch_loss / max(batches, 1):.4f}, "
-            f"validation={validation_metrics['overall']:.4f}"
-        )
-        if validation_metrics["overall"] > best_validation:
-            best_validation = validation_metrics["overall"]
-            best_epoch = epoch + 1
-            best_state = clone_model_state(model)
+        if validation_loader is not None:
+            validation_metrics = evaluate_robustness(model, validation_loader, device)
+            validation_history.append(
+                {
+                    "epoch": epoch + 1,
+                    "train_loss": epoch_loss / max(batches, 1),
+                    **validation_metrics,
+                }
+            )
+            print(
+                f"Epoch {epoch + 1:02d}: loss={epoch_loss / max(batches, 1):.4f}, "
+                f"validation={validation_metrics['overall']:.4f}"
+            )
+            if (
+                args.checkpoint_selection == "validation"
+                and (best_validation is None or validation_metrics["overall"] > best_validation)
+            ):
+                best_validation = validation_metrics["overall"]
+                best_epoch = epoch + 1
+                best_state = clone_model_state(model)
+        else:
+            print(f"Epoch {epoch + 1:02d}: loss={epoch_loss / max(batches, 1):.4f}")
 
     if device.type == "cuda":
         torch.cuda.synchronize(device)
@@ -195,9 +218,14 @@ def run_training() -> None:
         torch.cuda.max_memory_allocated(device) / (1024**3) if device.type == "cuda" else 0.0
     )
 
-    if best_state is None:
-        raise RuntimeError("No validation checkpoint was selected")
-    restore_model_state(model, best_state)
+    if args.checkpoint_selection == "validation":
+        if best_state is None:
+            raise RuntimeError("No validation checkpoint was selected")
+        restore_model_state(model, best_state)
+    else:
+        best_epoch = args.epochs
+        if validation_history:
+            best_validation = validation_history[-1]["overall"]
     if device.type == "cuda":
         torch.cuda.synchronize(device)
     test_start = time.perf_counter()
@@ -217,7 +245,7 @@ def run_training() -> None:
     }
     result = {
         "code_revision": repository_revision(),
-        "protocol": "controlled_text_input_final_v1",
+        "protocol": "controlled_text_input_declared_checkpoint_v2",
         "implementation_scope": "adapted_protocol_control_not_official_reproduction",
         "dataset": args.dataset,
         "core_type": args.core_type,
@@ -225,10 +253,11 @@ def run_training() -> None:
         "model_name_or_path": args.model_name_or_path,
         "seed": args.seed,
         "train_size": len(train_data),
-        "validation_size": len(validation_data),
+        "validation_size": len(validation_data) if validation_data is not None else 0,
         "test_size": len(test_data),
         "validation_fraction": args.validation_fraction,
         "validation_seed": args.validation_seed,
+        "checkpoint_selection": args.checkpoint_selection,
         "selected_epoch": best_epoch,
         "selected_validation_overall": best_validation,
         "validation_history": validation_history,
@@ -249,7 +278,8 @@ def run_training() -> None:
     }
     write_metrics(args.metrics_out, result)
     print(
-        f"Selected epoch {best_epoch}; test overall={test_metrics['overall']:.4f}, "
+        f"Selected {args.checkpoint_selection} epoch {best_epoch}; "
+        f"test overall={test_metrics['overall']:.4f}, "
         f"short={test_metrics['short_hop']:.4f}, long={test_metrics['long_hop']:.4f}; "
         f"peak={peak_memory_gib:.2f} GiB, throughput={resource_usage['training_examples_per_second']:.2f} ex/s"
     )
