@@ -251,6 +251,10 @@ def evaluate(model, loader, device):
         "evidence_at_1": evidence_hit / evidence_total if evidence_total else None,
         "evidence_total": evidence_total,
         "by_depth": {str(k): v[0] / max(v[1], 1) for k, v in sorted(by_depth.items())},
+        "by_depth_counts": {
+            str(k): {"correct": v[0], "total": v[1]}
+            for k, v in sorted(by_depth.items())
+        },
     }
 
 

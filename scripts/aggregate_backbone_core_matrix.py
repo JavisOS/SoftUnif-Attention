@@ -126,8 +126,12 @@ def collect_proposition(roots: list[Path]) -> dict:
             runs[key] = result
 
     aggregated = {}
-    split_names = {"proofwriter": "depth-5", "ruletaker": "test"}
-    for dataset, split_name in split_names.items():
+    split_names = {
+        "proofwriter": ("depth-3", "depth-5"),
+        "ruletaker": ("test",),
+    }
+    primary_splits = {"proofwriter": "depth-5", "ruletaker": "test"}
+    for dataset, dataset_splits in split_names.items():
         aggregated[dataset] = {}
         for backbone in BACKBONES:
             aggregated[dataset][backbone] = {}
@@ -138,38 +142,62 @@ def collect_proposition(roots: list[Path]) -> dict:
                     if key not in runs:
                         raise ValueError(f"Missing proposition result: {key}")
                     selected.append(runs[key])
-                splits = [run["results"][split_name] for run in selected]
-                test_sizes = {split["total"] for split in splits}
-                if len(test_sizes) != 1:
-                    raise ValueError(
-                        f"Test-size mismatch for {dataset}/{backbone}/{core}: {test_sizes}"
+                split_summaries = {}
+                for split_name in dataset_splits:
+                    splits = [run["results"][split_name] for run in selected]
+                    test_sizes = {split["total"] for split in splits}
+                    if len(test_sizes) != 1:
+                        raise ValueError(
+                            "Test-size mismatch for "
+                            f"{dataset}/{backbone}/{core}/{split_name}: {test_sizes}"
+                        )
+                    depth_keys = sorted(
+                        set.intersection(
+                            *(set(split["by_depth"]) for split in splits)
+                        ),
+                        key=int,
                     )
-                depth_keys = sorted(
-                    set.intersection(
-                        *(set(split["by_depth"]) for split in splits)
-                    ),
-                    key=int,
-                )
-                by_depth = {
-                    depth: summary(
-                        [float(split["by_depth"][depth]) for split in splits]
-                    )
-                    for depth in depth_keys
-                }
+                    by_depth = {}
+                    for depth in depth_keys:
+                        totals = {
+                            split["by_depth_counts"][depth]["total"]
+                            for split in splits
+                        }
+                        if len(totals) != 1:
+                            raise ValueError(
+                                "Depth-count mismatch for "
+                                f"{dataset}/{backbone}/{core}/{split_name}/D{depth}: "
+                                f"{totals}"
+                            )
+                        by_depth[depth] = {
+                            "accuracy": summary(
+                                [float(split["by_depth"][depth]) for split in splits]
+                            ),
+                            "total": totals.pop(),
+                        }
+                    split_summaries[split_name] = {
+                        "test_size": test_sizes.pop(),
+                        "accuracy": summary(
+                            [float(split["accuracy"]) for split in splits]
+                        ),
+                        "evidence_at_1": optional_summary(
+                            [split.get("evidence_at_1") for split in splits]
+                        ),
+                        "by_depth": by_depth,
+                    }
+
+                primary = split_summaries[primary_splits[dataset]]
                 aggregated[dataset][backbone][core] = {
                     "seeds": list(SEEDS),
                     "code_revisions": sorted(
                         {run["code_revision"] for run in selected}
                     ),
-                    "split": split_name,
-                    "test_size": test_sizes.pop(),
-                    "accuracy": summary(
-                        [float(split["accuracy"]) for split in splits]
-                    ),
-                    "evidence_at_1": optional_summary(
-                        [split.get("evidence_at_1") for split in splits]
-                    ),
-                    "by_depth": by_depth,
+                    "split": primary_splits[dataset],
+                    "test_size": primary["test_size"],
+                    "accuracy": primary["accuracy"],
+                    "evidence_at_1": primary["evidence_at_1"],
+                    "by_depth": primary["by_depth"],
+                    "splits": split_summaries,
                 }
     return aggregated
 
