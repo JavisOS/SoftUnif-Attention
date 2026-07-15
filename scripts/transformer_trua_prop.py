@@ -40,7 +40,8 @@ def select_query_anchor(query, shared_anchor, use_query_anchor):
 
 def validation_selection_key(metrics):
     """Prefer answer accuracy, using evidence selection only to break ties."""
-    return float(metrics["accuracy"]), float(metrics["evidence_at_1"])
+    evidence_at_1 = metrics["evidence_at_1"]
+    return float(metrics["accuracy"]), 0.0 if evidence_at_1 is None else float(evidence_at_1)
 
 
 def complete_input_limits(dataset, max_sentences, max_context_tokens, allow_truncation=False):
@@ -129,7 +130,7 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
         core_type: str = "trua",
     ):
         super().__init__()
-        if core_type not in {"trua", "self_attention"}:
+        if core_type not in {"encoder", "trua", "self_attention"}:
             raise ValueError(f"Unsupported proposition core: {core_type}")
         self.adapter_spec = PROPOSITION_EVIDENCE_ADAPTER
         self.encoder = AutoModel.from_pretrained(model_name, local_files_only=True)
@@ -137,12 +138,15 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
         if freeze_encoder:
             for p in self.encoder.parameters():
                 p.requires_grad = False
-        self.use_goal_guidance = use_goal_guidance
-        self.use_query_anchor = use_goal_guidance if use_query_anchor is None else use_query_anchor
+        self.use_goal_guidance = use_goal_guidance if core_type != "encoder" else False
+        self.use_query_anchor = (
+            use_goal_guidance if use_query_anchor is None else use_query_anchor
+        ) if core_type != "encoder" else False
         self.core_type = core_type
-        self.sent_proj = nn.Linear(hidden, hidden)
-        self.query_proj = nn.Linear(hidden, hidden)
-        self.shared_anchor = nn.Parameter(torch.zeros(hidden))
+        if core_type != "encoder":
+            self.sent_proj = nn.Linear(hidden, hidden)
+            self.query_proj = nn.Linear(hidden, hidden)
+            self.shared_anchor = nn.Parameter(torch.zeros(hidden))
         if core_type == "trua":
             self.unit_attn = RelationConditionedEntityAttention(
                 hidden_size=hidden,
@@ -154,11 +158,13 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
                 use_aggregation_branch=use_aggregation_branch,
                 use_step_branch=use_step_branch,
             )
-        else:
+        elif core_type == "self_attention":
             self.unit_attn = ContentSelfAttentionCore(hidden, num_heads=8, dropout=dropout)
+        else:
+            self.unit_attn = None
         self.classifier = nn.Sequential(
             nn.Dropout(dropout),
-            nn.Linear(hidden * 2, hidden),
+            nn.Linear(hidden if core_type == "encoder" else hidden * 2, hidden),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden, 2),
@@ -170,6 +176,9 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
 
     def forward(self, batch):
         text = self.encode_cls(batch["text_ids"], batch["text_mask"])
+        if self.core_type == "encoder":
+            return self.classifier(text), None
+
         query = self.query_proj(self.encode_cls(batch["query_ids"], batch["query_mask"]))
         flat_sent = self.sent_proj(self.encode_cls(batch["sent_ids"], batch["sent_mask"]))
         bsz = batch["label"].size(0)
@@ -226,19 +235,20 @@ def evaluate(model, loader, device):
             pred = logits.argmax(-1)
             correct += (pred == batch["label"]).sum().item()
             total += pred.numel()
-            top = scores.masked_fill(~batch["mask"], -1e4).argmax(-1)
-            for i, j in enumerate(top.cpu().tolist()):
-                valid_evidence = batch["evidence"][i][batch["mask"][i]]
-                if valid_evidence.sum().item() > 0:
-                    evidence_total += 1
-                    evidence_hit += int(batch["evidence"][i, j].item() > 0)
+            if scores is not None:
+                top = scores.masked_fill(~batch["mask"], -1e4).argmax(-1)
+                for i, j in enumerate(top.cpu().tolist()):
+                    valid_evidence = batch["evidence"][i][batch["mask"][i]]
+                    if valid_evidence.sum().item() > 0:
+                        evidence_total += 1
+                        evidence_hit += int(batch["evidence"][i, j].item() > 0)
             for d, p, y in zip(batch["depth"].cpu().tolist(), pred.cpu().tolist(), batch["label"].cpu().tolist()):
                 by_depth[d][1] += 1
                 by_depth[d][0] += int(p == y)
     return {
         "accuracy": correct / max(total, 1),
         "total": total,
-        "evidence_at_1": evidence_hit / max(evidence_total, 1),
+        "evidence_at_1": evidence_hit / evidence_total if evidence_total else None,
         "evidence_total": evidence_total,
         "by_depth": {str(k): v[0] / max(v[1], 1) for k, v in sorted(by_depth.items())},
     }
@@ -294,6 +304,8 @@ def run(train, validation, tests, args):
             logits, scores = model(batch)
             loss = nn.functional.cross_entropy(logits, batch["label"])
             if args.lambda_evidence > 0:
+                if scores is None:
+                    raise ValueError("Evidence regularization requires a unit-attention core")
                 loss = loss + args.lambda_evidence * evidence_ce_loss(
                     scores,
                     batch["mask"],
@@ -414,7 +426,11 @@ def main():
     parser.add_argument("--allow-input-truncation", action="store_true")
     parser.add_argument("--freeze-encoder", action="store_true")
     parser.add_argument("--relation-channels", type=int, default=8)
-    parser.add_argument("--core-type", choices=["trua", "self_attention"], default="trua")
+    parser.add_argument(
+        "--core-type",
+        choices=["encoder", "trua", "self_attention"],
+        default="trua",
+    )
     parser.add_argument("--use-relation-conditioning", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--use-goal-guidance", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--use-query-anchor", action=argparse.BooleanOptionalAction, default=None)
@@ -426,6 +442,8 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
+    if args.core_type == "encoder" and args.lambda_evidence != 0.0:
+        parser.error("--core-type encoder requires --lambda-evidence 0")
     args.max_sents, args.max_len = complete_input_limits(
         args.dataset,
         args.max_sents,
