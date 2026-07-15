@@ -21,6 +21,7 @@ REPO_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(SCRIPT_DIR))
 from clutrr.models.relation_attention import RelationConditionedEntityAttention
+from clutrr.models.controlled_unit_baselines import ContentSelfAttentionCore
 from clutrr.models.trua_core import (
     PROPOSITION_EVIDENCE_ADAPTER,
     TransitionRegularizedUnitAttentionCore,
@@ -30,8 +31,8 @@ from clutrr.training.model_selection import clone_model_state, repository_revisi
 from generic_trua_prop import load_prontoqa, load_proofwriter, load_ruletaker_gfair, load_ruletaker_raw
 
 
-def select_query_anchor(query, shared_anchor, use_goal_guidance):
-    if use_goal_guidance:
+def select_query_anchor(query, shared_anchor, use_query_anchor):
+    if use_query_anchor:
         return query
     return shared_anchor.unsqueeze(0).expand(query.size(0), -1)
 
@@ -123,8 +124,12 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
         use_goal_guidance: bool = True,
         use_aggregation_branch: bool = True,
         use_step_branch: bool = True,
+        use_query_anchor: bool | None = None,
+        core_type: str = "trua",
     ):
         super().__init__()
+        if core_type not in {"trua", "self_attention"}:
+            raise ValueError(f"Unsupported proposition core: {core_type}")
         self.adapter_spec = PROPOSITION_EVIDENCE_ADAPTER
         self.encoder = AutoModel.from_pretrained(model_name, local_files_only=True)
         hidden = self.encoder.config.hidden_size
@@ -132,19 +137,24 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
             for p in self.encoder.parameters():
                 p.requires_grad = False
         self.use_goal_guidance = use_goal_guidance
+        self.use_query_anchor = use_goal_guidance if use_query_anchor is None else use_query_anchor
+        self.core_type = core_type
         self.sent_proj = nn.Linear(hidden, hidden)
         self.query_proj = nn.Linear(hidden, hidden)
         self.shared_anchor = nn.Parameter(torch.zeros(hidden))
-        self.unit_attn = RelationConditionedEntityAttention(
-            hidden_size=hidden,
-            num_relations=relation_channels,
-            dropout=dropout,
-            top_k=None,
-            use_relation_conditioning=use_relation_conditioning,
-            use_goal_guidance=use_goal_guidance,
-            use_aggregation_branch=use_aggregation_branch,
-            use_step_branch=use_step_branch,
-        )
+        if core_type == "trua":
+            self.unit_attn = RelationConditionedEntityAttention(
+                hidden_size=hidden,
+                num_relations=relation_channels,
+                dropout=dropout,
+                top_k=None,
+                use_relation_conditioning=use_relation_conditioning,
+                use_goal_guidance=use_goal_guidance,
+                use_aggregation_branch=use_aggregation_branch,
+                use_step_branch=use_step_branch,
+            )
+        else:
+            self.unit_attn = ContentSelfAttentionCore(hidden, num_heads=8, dropout=dropout)
         self.classifier = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(hidden * 2, hidden),
@@ -170,20 +180,27 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
             sent[i, :n] = flat_sent[cursor : cursor + n]
             cursor += n
 
-        # The no-goal ablation removes query information from unit selection,
-        # while the global answer head still receives the original text/query.
-        anchor = select_query_anchor(query, self.shared_anchor, self.use_goal_guidance)
+        # Anchor identity and explicit goal injection are independent controls.
+        anchor = select_query_anchor(query, self.shared_anchor, self.use_query_anchor)
         units = torch.cat([anchor.unsqueeze(1), sent], dim=1)
         unit_mask = torch.cat(
             [torch.ones(bsz, 1, device=batch["mask"].device, dtype=torch.bool), batch["mask"]],
             dim=1,
         )
-        updated, transitions = self.unit_attn(units, unit_mask, goal_embedding=query)
-        anchor_edges = transitions["edge_index"][:, 0, :]
-        anchor_logits = transitions["hop_logits"][:, 0, :]
-        aligned_logits = anchor_logits.new_full((bsz, max_s + 1), -1e4)
-        aligned_logits.scatter_(1, anchor_edges, anchor_logits)
-        scores = aligned_logits[:, 1:].masked_fill(~batch["mask"], -1e4)
+        if self.core_type == "trua":
+            updated, transitions = self.unit_attn(units, unit_mask, goal_embedding=query)
+            anchor_edges = transitions["edge_index"][:, 0, :]
+            anchor_logits = transitions["hop_logits"][:, 0, :]
+            aligned_logits = anchor_logits.new_full((bsz, max_s + 1), -1e4)
+            aligned_logits.scatter_(1, anchor_edges, anchor_logits)
+            scores = aligned_logits[:, 1:].masked_fill(~batch["mask"], -1e4)
+        else:
+            updated, attention_logits = self.unit_attn.forward_with_scores(
+                units,
+                unit_mask,
+                query,
+            )
+            scores = attention_logits[:, 0, 1:].masked_fill(~batch["mask"], -1e4)
         attn = torch.softmax(scores, dim=-1)
         ctx = (attn.unsqueeze(-1) * updated[:, 1:]).sum(1)
         logits = self.classifier(torch.cat([text, ctx], dim=-1))
@@ -244,6 +261,8 @@ def run(train, validation, tests, args):
         use_goal_guidance=args.use_goal_guidance,
         use_aggregation_branch=args.use_aggregation_branch,
         use_step_branch=args.use_step_branch,
+        use_query_anchor=args.use_query_anchor,
+        core_type=args.core_type,
     ).to(device)
     train_ds = TextEvidenceDataset(train, tokenizer, args.max_sents, args.max_len)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=train_ds.collate)
@@ -317,9 +336,11 @@ def run(train, validation, tests, args):
         "selection_rule": "validation accuracy; Evidence@1 breaks exact ties",
         "validation_history": validation_history,
         "architecture": {
+            "core_type": args.core_type,
             "relation_channels": args.relation_channels,
             "use_relation_conditioning": args.use_relation_conditioning,
             "use_goal_guidance": args.use_goal_guidance,
+            "use_query_anchor": model.use_query_anchor,
             "use_aggregation_branch": args.use_aggregation_branch,
             "use_step_branch": args.use_step_branch,
         },
@@ -372,8 +393,10 @@ def main():
     parser.add_argument("--allow-input-truncation", action="store_true")
     parser.add_argument("--freeze-encoder", action="store_true")
     parser.add_argument("--relation-channels", type=int, default=8)
+    parser.add_argument("--core-type", choices=["trua", "self_attention"], default="trua")
     parser.add_argument("--use-relation-conditioning", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--use-goal-guidance", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--use-query-anchor", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--use-aggregation-branch", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--use-step-branch", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--validation-fraction", type=float, default=0.1)

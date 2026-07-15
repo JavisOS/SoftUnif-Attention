@@ -58,12 +58,12 @@ def test_validation_split_is_fixed_and_stratified():
     assert sorted(train_a.indices + validation_a.indices) == dataset
 
 
-def test_proposition_no_goal_uses_a_shared_query_free_anchor():
+def test_proposition_query_anchor_can_be_controlled_independently():
     query = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
     shared_anchor = torch.tensor([7.0, 8.0])
 
-    guided = select_query_anchor(query, shared_anchor, use_goal_guidance=True)
-    unguided = select_query_anchor(query, shared_anchor, use_goal_guidance=False)
+    guided = select_query_anchor(query, shared_anchor, use_query_anchor=True)
+    unguided = select_query_anchor(query, shared_anchor, use_query_anchor=False)
 
     assert guided is query
     assert torch.equal(unguided, torch.tensor([[7.0, 8.0], [7.0, 8.0]]))
