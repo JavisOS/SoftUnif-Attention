@@ -12,6 +12,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import torch
+
 
 DEFAULT_BACKBONES = (
     "bert:/vepfs/trua_models/hf/bert-base-uncased",
@@ -169,6 +171,13 @@ def write_json(path: Path, payload: dict) -> None:
 
 def main() -> None:
     args = build_parser().parse_args()
+    device_count = torch.cuda.device_count()
+    invalid_gpus = [gpu for gpu in args.gpus if gpu < 0 or gpu >= device_count]
+    if invalid_gpus:
+        raise ValueError(
+            f"Requested unavailable GPUs {invalid_gpus}; visible indices are "
+            f"0--{max(device_count - 1, 0)}"
+        )
     repo_root = Path(__file__).resolve().parents[1]
     output_root = Path(args.output_root)
     output_root.mkdir(parents=True, exist_ok=True)
