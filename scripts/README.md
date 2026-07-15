@@ -8,13 +8,23 @@ Primary entry points:
 
 - `run_clutrr_backbone_core_matrix.py`: BERT/RoBERTa/DeBERTa-v3 comparison
   of the encoder, objective-matched content-only unit attention, and TRUA under
-  a declared checkpoint protocol.
+  a declared checkpoint protocol. It trains on the complete formal training
+  split, selects checkpoints on a deduplicated independently generated CLUTRR
+  development set, and evaluates the formal test split once.
 - `run_proposition_backbone_core_matrix.py`: the corresponding ProofWriter and
   RuleTaker backbone/core matrix; the content-only control receives the same
-  evidence objective as TRUA but no query route in unit selection.
+  evidence objective as TRUA but no query route in unit selection. Formal runs
+  use the complete official train/development/test splits by default; explicit
+  nonzero `--limit-train` and `--limit-test` values are reserved for pilots.
 - `run_clutrr_protocol_audit.py`: controlled full/held-out and
   final/validation checkpoint audit used to reconcile historical CLUTRR
   scores with the current protocol.
+- `audit_proposition_splits.py`: full-split identity, overlap, evidence
+  coverage, sentence-count, and tokenizer-limit audit for ProofWriter and
+  RuleTaker before the formal matrix is launched.
+- `audit_clutrr_external_validation.py`: verifies that the independently
+  generated CLUTRR checkpoint-selection set has no exact examples in the
+  formal training or test split.
 - `formal_trua_10ep_supervisor.sh`: formal 10-epoch TRUA/label-only queue.
 - `transformer_trua_prop.py`: DeBERTa/RoBERTa-style TRUA-Prop runner for
   ProofWriter, RuleTaker, and PrOntoQA.

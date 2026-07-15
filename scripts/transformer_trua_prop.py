@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import platform
 import random
 import sys
 import time
@@ -13,6 +15,8 @@ from collections import defaultdict
 from pathlib import Path
 
 import torch
+import tokenizers
+import transformers
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModel, AutoTokenizer
@@ -42,6 +46,37 @@ def validation_selection_key(metrics):
     """Prefer answer accuracy, using evidence selection only to break ties."""
     evidence_at_1 = metrics["evidence_at_1"]
     return float(metrics["accuracy"]), 0.0 if evidence_at_1 is None else float(evidence_at_1)
+
+
+def sample_fingerprint(samples):
+    """Fingerprint the exact ordered examples used by an experiment split."""
+    digest = hashlib.sha256()
+    for sample in samples:
+        record = {
+            "id": sample.get("id"),
+            "context": sample.get("context"),
+            "query": sample.get("query"),
+            "label": sample.get("label"),
+            "depth": sample.get("depth"),
+            "trace_labels": sample.get("trace_labels"),
+        }
+        digest.update(
+            json.dumps(record, sort_keys=True, ensure_ascii=True).encode("utf-8")
+        )
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def split_record(samples):
+    examples = len(samples)
+    evidence_examples = sum(bool(sum(sample.get("trace_labels") or [])) for sample in samples)
+    positives = sum(int(sample.get("label", 0)) for sample in samples)
+    return {
+        "examples": examples,
+        "sha256": sample_fingerprint(samples),
+        "positive_fraction": positives / max(examples, 1),
+        "evidence_fraction": evidence_examples / max(examples, 1),
+    }
 
 
 def complete_input_limits(dataset, max_sentences, max_context_tokens, allow_truncation=False):
@@ -285,9 +320,22 @@ def run(train, validation, tests, args):
     )
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
-    run_started_at = time.perf_counter()
+    split_records = {
+        "train": split_record(train),
+        "validation": split_record(validation),
+        "tests": {name: split_record(samples) for name, samples in tests.items()},
+    }
     train_ds = TextEvidenceDataset(train, tokenizer, args.max_sents, args.max_len)
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=train_ds.collate)
+    data_order_seed = args.seed + 271828
+    data_order_generator = torch.Generator()
+    data_order_generator.manual_seed(data_order_seed)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=train_ds.collate,
+        generator=data_order_generator,
+    )
     validation_ds = TextEvidenceDataset(validation, tokenizer, args.max_sents, args.max_len)
     validation_loader = DataLoader(
         validation_ds,
@@ -300,6 +348,12 @@ def run(train, validation, tests, args):
     best_epoch = -1
     best_state = None
     validation_history = []
+    optimization_seed = args.seed + 314159
+    torch.manual_seed(optimization_seed)
+    torch.cuda.manual_seed_all(optimization_seed)
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    training_started_at = time.perf_counter()
     for epoch in range(args.epochs):
         model.train()
         total_loss = 0.0
@@ -330,15 +384,23 @@ def run(train, validation, tests, args):
             best_validation_key = validation_key
             best_epoch = epoch + 1
             best_state = clone_model_state(model)
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    training_seconds = time.perf_counter() - training_started_at
     if best_state is None:
         raise RuntimeError("No validation checkpoint was selected")
     restore_model_state(model, best_state)
     results = {}
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    test_started_at = time.perf_counter()
     for name, samples in tests.items():
         ds = TextEvidenceDataset(samples, tokenizer, args.max_sents, args.max_len)
         loader = DataLoader(ds, batch_size=args.batch_size, collate_fn=ds.collate)
         results[name] = evaluate(model, loader, device)
-    wall_time_seconds = time.perf_counter() - run_started_at
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    test_seconds = time.perf_counter() - test_started_at
     peak_cuda_memory_gib = (
         torch.cuda.max_memory_allocated(device) / (1024**3)
         if device.type == "cuda"
@@ -360,6 +422,7 @@ def run(train, validation, tests, args):
         "input_truncation_allowed": args.allow_input_truncation,
         "train": len(train),
         "validation": len(validation),
+        "split_records": split_records,
         "selected_epoch": best_epoch,
         "selected_validation_accuracy": best_validation_key[0],
         "selected_validation_evidence_at_1": best_validation_key[1],
@@ -368,8 +431,18 @@ def run(train, validation, tests, args):
             "device": str(device),
             "total_parameters": total_parameters,
             "trainable_parameters": trainable_parameters,
-            "wall_time_seconds": wall_time_seconds,
+            "training_seconds": training_seconds,
+            "test_seconds": test_seconds,
+            "training_examples_per_second": (
+                len(train) * args.epochs / max(training_seconds, 1e-9)
+            ),
             "peak_cuda_memory_gib": peak_cuda_memory_gib,
+        },
+        "software": {
+            "python": platform.python_version(),
+            "torch": torch.__version__,
+            "transformers": transformers.__version__,
+            "tokenizers": tokenizers.__version__,
         },
         "validation_history": validation_history,
         "architecture": {
@@ -380,6 +453,11 @@ def run(train, validation, tests, args):
             "use_query_anchor": model.use_query_anchor,
             "use_aggregation_branch": args.use_aggregation_branch,
             "use_step_branch": args.use_step_branch,
+        },
+        "randomness": {
+            "model_initialization_seed": args.seed,
+            "data_order_seed": data_order_seed,
+            "optimization_seed": optimization_seed,
         },
         "results": results,
     }

@@ -34,6 +34,35 @@ def _move_batch(batch: dict, device: torch.device) -> dict:
     return moved
 
 
+def _deduplicate_dataset(dataset):
+    seen = set()
+    unique = []
+    for item in dataset.data:
+        key = (item["story"], tuple(item["query"]), item["target_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    removed = len(dataset.data) - len(unique)
+    dataset.data = unique
+    return removed
+
+
+def _validation_score(metrics, selection_metric):
+    if selection_metric == "overall":
+        return float(metrics["overall"])
+    selected = [
+        item
+        for hop, item in metrics.get("per_hop", {}).items()
+        if 4 <= int(hop) <= 10
+    ]
+    correct = sum(item["correct"] for item in selected)
+    total = sum(item["total"] for item in selected)
+    if not total:
+        raise ValueError("Validation data contain no official 4--10 hop examples")
+    return correct / total
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -53,6 +82,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--validation_fraction", type=float, default=0.1)
     parser.add_argument("--validation_seed", type=int, default=2027)
+    parser.add_argument("--external_validation_root", default=None)
+    parser.add_argument("--external_validation_dataset", default=None)
+    parser.add_argument(
+        "--validation_selection_metric",
+        choices=("overall", "unseen_4_10"),
+        default="overall",
+    )
     parser.add_argument(
         "--checkpoint_selection",
         choices=("validation", "final"),
@@ -73,8 +109,25 @@ def run_training() -> None:
     args = build_parser().parse_args()
     if not 0.0 <= args.validation_fraction < 1.0:
         raise ValueError("validation_fraction must be in [0, 1)")
-    if args.checkpoint_selection == "validation" and args.validation_fraction == 0.0:
-        raise ValueError("validation checkpoint selection requires validation_fraction > 0")
+    has_external_validation = bool(
+        args.external_validation_root or args.external_validation_dataset
+    )
+    if bool(args.external_validation_root) != bool(args.external_validation_dataset):
+        raise ValueError(
+            "external validation requires both root and dataset arguments"
+        )
+    if has_external_validation and args.validation_fraction != 0.0:
+        raise ValueError(
+            "external validation cannot be combined with a training-set holdout"
+        )
+    if (
+        args.checkpoint_selection == "validation"
+        and args.validation_fraction == 0.0
+        and not has_external_validation
+    ):
+        raise ValueError("validation checkpoint selection requires validation data")
+    if has_external_validation and args.checkpoint_selection != "validation":
+        raise ValueError("external validation requires validation checkpoint selection")
     if args.core_type == "self_attention_matched":
         if args.lambda_transition == 0.0 and args.lambda_edge == 0.0:
             raise ValueError("self_attention_matched requires a nonzero matched objective")
@@ -95,7 +148,29 @@ def run_training() -> None:
         augment=True,
     )
     full_train.data = [item for item in full_train.data if item is not None]
-    if args.validation_fraction > 0.0:
+    validation_source = None
+    if has_external_validation:
+        train_data = full_train
+        validation_data = TruaClutrrDataset(
+            args.external_validation_root,
+            args.external_validation_dataset,
+            "test",
+            100,
+            tokenizer=tokenizer,
+            augment=True,
+            augment_seed=args.validation_seed,
+        )
+        validation_data.data = [
+            item for item in validation_data.data if item is not None
+        ]
+        duplicates_removed = _deduplicate_dataset(validation_data)
+        validation_source = {
+            "type": "independent_generated_test_split",
+            "root": args.external_validation_root,
+            "dataset": args.external_validation_dataset,
+            "duplicates_removed": duplicates_removed,
+        }
+    elif args.validation_fraction > 0.0:
         strata = [(item["hops"], item["target_id"]) for item in full_train.data]
         train_data, validation_data = stratified_train_validation_split(
             full_train,
@@ -103,6 +178,11 @@ def run_training() -> None:
             validation_fraction=args.validation_fraction,
             seed=args.validation_seed,
         )
+        validation_source = {
+            "type": "stratified_training_holdout",
+            "fraction": args.validation_fraction,
+            "seed": args.validation_seed,
+        }
     else:
         train_data = full_train
         validation_data = None
@@ -118,12 +198,16 @@ def run_training() -> None:
     test_data.data = [item for item in test_data.data if item is not None]
 
     collator = TruaBatchCollator(tokenizer, device, model_type=args.model_type)
+    data_order_seed = args.seed + 271828
+    data_order_generator = torch.Generator()
+    data_order_generator.manual_seed(data_order_seed)
     train_loader = DataLoader(
         train_data,
         batch_size=args.batch_size,
         shuffle=True,
         collate_fn=collator,
         num_workers=args.num_workers,
+        generator=data_order_generator,
     )
     validation_loader = None
     if validation_data is not None:
@@ -166,6 +250,9 @@ def run_training() -> None:
     best_epoch = -1
     best_state = None
     validation_history = []
+    optimization_seed = args.seed + 314159
+    torch.manual_seed(optimization_seed)
+    torch.cuda.manual_seed_all(optimization_seed)
 
     print(
         f"Controlled baseline: core={args.core_type}, seed={args.seed}, "
@@ -190,22 +277,27 @@ def run_training() -> None:
 
         if validation_loader is not None:
             validation_metrics = evaluate_robustness(model, validation_loader, device)
+            selection_score = _validation_score(
+                validation_metrics, args.validation_selection_metric
+            )
             validation_history.append(
                 {
                     "epoch": epoch + 1,
                     "train_loss": epoch_loss / max(batches, 1),
+                    "selection_score": selection_score,
                     **validation_metrics,
                 }
             )
             print(
                 f"Epoch {epoch + 1:02d}: loss={epoch_loss / max(batches, 1):.4f}, "
-                f"validation={validation_metrics['overall']:.4f}"
+                f"validation={validation_metrics['overall']:.4f}, "
+                f"selection={selection_score:.4f} ({args.validation_selection_metric})"
             )
             if (
                 args.checkpoint_selection == "validation"
-                and (best_validation is None or validation_metrics["overall"] > best_validation)
+                and (best_validation is None or selection_score > best_validation)
             ):
-                best_validation = validation_metrics["overall"]
+                best_validation = selection_score
                 best_epoch = epoch + 1
                 best_state = clone_model_state(model)
         else:
@@ -225,7 +317,17 @@ def run_training() -> None:
     else:
         best_epoch = args.epochs
         if validation_history:
-            best_validation = validation_history[-1]["overall"]
+            best_validation = _validation_score(
+                validation_history[-1], args.validation_selection_metric
+            )
+    selected_validation_overall = next(
+        (
+            record["overall"]
+            for record in validation_history
+            if record["epoch"] == best_epoch
+        ),
+        None,
+    )
     if device.type == "cuda":
         torch.cuda.synchronize(device)
     test_start = time.perf_counter()
@@ -257,9 +359,12 @@ def run_training() -> None:
         "test_size": len(test_data),
         "validation_fraction": args.validation_fraction,
         "validation_seed": args.validation_seed,
+        "validation_source": validation_source,
+        "validation_selection_metric": args.validation_selection_metric,
         "checkpoint_selection": args.checkpoint_selection,
         "selected_epoch": best_epoch,
-        "selected_validation_overall": best_validation,
+        "selected_validation_score": best_validation,
+        "selected_validation_overall": selected_validation_overall,
         "validation_history": validation_history,
         "test": test_metrics,
         "resource_usage": resource_usage,
@@ -274,6 +379,8 @@ def run_training() -> None:
             "path_or_edge_supervision": args.lambda_transition != 0.0 or args.lambda_edge != 0.0,
             "lambda_transition": args.lambda_transition,
             "lambda_edge": args.lambda_edge,
+            "data_order_seed": data_order_seed,
+            "optimization_seed": optimization_seed,
         },
     }
     write_metrics(args.metrics_out, result)

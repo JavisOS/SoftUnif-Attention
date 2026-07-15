@@ -25,6 +25,7 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
         consistency_mode="kl",
         use_relation_conditioning=True,
         use_goal_guidance=True,
+        goal_representation="object",
         use_aggregation_branch=True,
         use_step_branch=True,
         edge_supervision_target="latent",
@@ -56,11 +57,16 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
             raise ValueError(f"Unsupported edge_supervision_target: {edge_supervision_target}")
         if pair_feature_mode not in {"product", "product_diff"}:
             raise ValueError(f"Unsupported pair_feature_mode: {pair_feature_mode}")
+        if goal_representation not in {"object", "endpoint_pair"}:
+            raise ValueError(
+                f"Unsupported goal representation: {goal_representation}"
+            )
 
         self.prediction_head = prediction_head
         self.consistency_mode = consistency_mode
         self.edge_supervision_target = edge_supervision_target
         self.pair_feature_mode = pair_feature_mode
+        self.goal_representation = goal_representation
 
         self.encoder = build_backbone_model(
             self.model_type,
@@ -114,6 +120,11 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
         self.register_buffer("rel_comp_prior", comp_prior)
         self.register_buffer("inverse_pairs", torch.tensor(spouse_inverse_pairs, dtype=torch.long))
         self.residual_gate_logit = nn.Parameter(torch.tensor(float(residual_gate_init)))
+        if self.goal_representation == "endpoint_pair":
+            self.query_ctx_proj = nn.Sequential(
+                nn.Linear(self.hidden_size * 3, self.hidden_size),
+                nn.Tanh(),
+            )
 
     def _build_forced_edge_index(self, path_node_ids, max_entities):
         if path_node_ids is None:
@@ -159,11 +170,17 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
         if self.training and self.force_gold_edges:
             forced_edges = self._build_forced_edge_index(path_node_ids, entity_spans.size(1))
 
-        obj_indices = query_indices[:, 1]
+        if self.goal_representation == "endpoint_pair":
+            goal_embedding = self._build_query_context(entity_embs, query_indices)
+            obj_indices = None
+        else:
+            goal_embedding = None
+            obj_indices = query_indices[:, 1]
         entity_embs_upd, sparse_edges = self.entity_attn(
             entity_embs,
             valid_mask,
             obj_indices=obj_indices,
+            goal_embedding=goal_embedding,
             forced_edge_index=forced_edges,
         )
 

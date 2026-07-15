@@ -71,10 +71,14 @@ BASE_TRAIN_DEFAULTS = {
     "relation_score_mode": "mlp",
     "relation_rank": 64,
     "use_goal_guidance": True,
+    "goal_representation": "object",
     "use_aggregation_branch": True,
     "use_step_branch": True,
     "validation_fraction": 0.1,
     "validation_seed": 2027,
+    "external_validation_root": None,
+    "external_validation_dataset": None,
+    "validation_selection_metric": "overall",
     "checkpoint_selection": "validation",
     "metrics_out": None,
     "train_data_percentage": 100,
@@ -106,6 +110,34 @@ def _make_train_pbar(iterable, desc: str):
         ncols=100,
         leave=False,
     )
+
+
+def _deduplicate_dataset(dataset):
+    seen = set()
+    unique = []
+    for item in dataset.data:
+        key = (item["story"], tuple(item["query"]), item["target_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    removed = len(dataset.data) - len(unique)
+    dataset.data = unique
+    return removed
+
+
+def _validation_score(metrics, selection_metric):
+    if selection_metric == "overall":
+        return float(metrics["overall"])
+    per_hop = metrics.get("per_hop", {})
+    selected = [
+        item for hop, item in per_hop.items() if 4 <= int(hop) <= 10
+    ]
+    correct = sum(item["correct"] for item in selected)
+    total = sum(item["total"] for item in selected)
+    if not total:
+        raise ValueError("Validation data contain no official 4--10 hop examples")
+    return correct / total
 
 
 def _extract_config_path(argv=None):
@@ -248,6 +280,22 @@ def build_arg_parser(defaults=None):
         help="Fixed seed for the train/validation partition; independent of the model seed.",
     )
     parser.add_argument(
+        "--external_validation_root",
+        default=defaults["external_validation_root"],
+        help="Optional root containing an independent CLUTRR validation dataset.",
+    )
+    parser.add_argument(
+        "--external_validation_dataset",
+        default=defaults["external_validation_dataset"],
+        help="Dataset folder whose test split is used only for checkpoint selection.",
+    )
+    parser.add_argument(
+        "--validation_selection_metric",
+        choices=("overall", "unseen_4_10"),
+        default=defaults["validation_selection_metric"],
+        help="Metric used to select a checkpoint on validation data.",
+    )
+    parser.add_argument(
         "--checkpoint_selection",
         choices=["validation", "final"],
         default=defaults["checkpoint_selection"],
@@ -327,6 +375,12 @@ def build_arg_parser(defaults=None):
         action=argparse.BooleanOptionalAction,
         default=defaults["use_goal_guidance"],
         help="Inject the adapter-provided query goal into the step-selection query.",
+    )
+    parser.add_argument(
+        "--goal_representation",
+        choices=("object", "endpoint_pair"),
+        default=defaults["goal_representation"],
+        help="Entity adapter representation supplied as the query goal.",
     )
     parser.add_argument(
         "--use_aggregation_branch",
@@ -426,8 +480,25 @@ def run_training():
 
     if not 0.0 <= args.validation_fraction < 1.0:
         raise ValueError("validation_fraction must be in [0, 1)")
-    if args.checkpoint_selection == "validation" and args.validation_fraction == 0.0:
-        raise ValueError("validation checkpoint selection requires validation_fraction > 0")
+    has_external_validation = bool(
+        args.external_validation_root or args.external_validation_dataset
+    )
+    if bool(args.external_validation_root) != bool(args.external_validation_dataset):
+        raise ValueError(
+            "external validation requires both root and dataset arguments"
+        )
+    if has_external_validation and args.validation_fraction != 0.0:
+        raise ValueError(
+            "external validation cannot be combined with a training-set holdout"
+        )
+    if (
+        args.checkpoint_selection == "validation"
+        and args.validation_fraction == 0.0
+        and not has_external_validation
+    ):
+        raise ValueError("validation checkpoint selection requires validation data")
+    if has_external_validation and args.checkpoint_selection != "validation":
+        raise ValueError("external validation requires validation checkpoint selection")
 
     if args.gpus is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpus)
@@ -458,6 +529,7 @@ def run_training():
             f"prediction_head={args.prediction_head}, "
             f"relation_conditioning={args.use_relation_conditioning}, "
             f"goal_guidance={args.use_goal_guidance}, aggregation_branch={args.use_aggregation_branch}, "
+            f"goal_representation={args.goal_representation}, "
             f"step_branch={args.use_step_branch}, "
             f"edge_target={args.edge_supervision_target}, pair_features={args.pair_feature_mode}, "
             f"consistency={args.consistency_mode}, sparse_top_k={args.sparse_top_k}, "
@@ -481,7 +553,33 @@ def run_training():
         augment=True,
     )
     full_train_ds.data = [d for d in full_train_ds.data if d is not None]
-    if args.validation_fraction > 0.0:
+    validation_source = None
+    if has_external_validation:
+        train_ds = full_train_ds
+        validation_ds = TruaClutrrDataset(
+            args.external_validation_root,
+            args.external_validation_dataset,
+            "test",
+            100,
+            tokenizer=tokenizer,
+            augment=True,
+            augment_seed=args.validation_seed,
+        )
+        validation_ds.data = [
+            item for item in validation_ds.data if item is not None
+        ]
+        duplicates_removed = _deduplicate_dataset(validation_ds)
+        validation_source = {
+            "type": "independent_generated_test_split",
+            "root": args.external_validation_root,
+            "dataset": args.external_validation_dataset,
+            "duplicates_removed": duplicates_removed,
+        }
+        print(
+            f"External validation: {len(validation_ds)} examples from "
+            f"{args.external_validation_dataset}; removed {duplicates_removed} duplicates"
+        )
+    elif args.validation_fraction > 0.0:
         train_strata = [(item["hops"], item["target_id"]) for item in full_train_ds.data]
         train_ds, validation_ds = stratified_train_validation_split(
             full_train_ds,
@@ -493,6 +591,11 @@ def run_training():
             f"Train/validation split: {len(train_ds)}/{len(validation_ds)} "
             f"(fraction={args.validation_fraction}, seed={args.validation_seed})"
         )
+        validation_source = {
+            "type": "stratified_training_holdout",
+            "fraction": args.validation_fraction,
+            "seed": args.validation_seed,
+        }
     else:
         train_ds = full_train_ds
         validation_ds = None
@@ -510,6 +613,9 @@ def run_training():
     test_ds.data = [d for d in test_ds.data if d is not None]
 
     collator = TruaBatchCollator(tokenizer, device, model_type=args.model_type)
+    data_order_seed = args.seed + 271828
+    data_order_generator = torch.Generator()
+    data_order_generator.manual_seed(data_order_seed)
 
     train_loader = DataLoader(
         train_ds,
@@ -517,6 +623,7 @@ def run_training():
         shuffle=True,
         collate_fn=collator,
         num_workers=args.num_workers,
+        generator=data_order_generator,
     )
     validation_loader = None
     if validation_ds is not None:
@@ -550,6 +657,7 @@ def run_training():
         consistency_mode=args.consistency_mode,
         use_relation_conditioning=args.use_relation_conditioning,
         use_goal_guidance=args.use_goal_guidance,
+        goal_representation=args.goal_representation,
         use_aggregation_branch=args.use_aggregation_branch,
         use_step_branch=args.use_step_branch,
         edge_supervision_target=args.edge_supervision_target,
@@ -602,6 +710,9 @@ def run_training():
     best_epoch = -1
     best_state = None
     validation_history = []
+    optimization_seed = args.seed + 314159
+    torch.manual_seed(optimization_seed)
+    torch.cuda.manual_seed_all(optimization_seed)
 
     for epoch in range(args.epochs):
         if args.strategy == "ddp":
@@ -670,13 +781,25 @@ def run_training():
 
         if _is_main_process() and validation_loader is not None:
             validation_metrics = evaluate_robustness(model, validation_loader, device)
-            validation_history.append({"epoch": epoch + 1, **validation_metrics})
-            print(f"  Validation Overall:  {validation_metrics['overall']:.4f}")
+            selection_score = _validation_score(
+                validation_metrics, args.validation_selection_metric
+            )
+            validation_history.append(
+                {
+                    "epoch": epoch + 1,
+                    "selection_score": selection_score,
+                    **validation_metrics,
+                }
+            )
+            print(
+                f"  Validation Overall:  {validation_metrics['overall']:.4f}; "
+                f"selection={selection_score:.4f} ({args.validation_selection_metric})"
+            )
             if (
                 args.checkpoint_selection == "validation"
-                and (best_validation is None or validation_metrics["overall"] > best_validation)
+                and (best_validation is None or selection_score > best_validation)
             ):
-                best_validation = validation_metrics["overall"]
+                best_validation = selection_score
                 best_epoch = epoch + 1
                 best_state = clone_model_state(model)
 
@@ -695,15 +818,25 @@ def run_training():
         restore_model_state(model, best_state)
         selection_message = (
             f"Selected Validation Epoch: {best_epoch} "
-            f"(overall={best_validation:.4f})"
+            f"({args.validation_selection_metric}={best_validation:.4f})"
         )
         test_message = "--> Test Evaluation (checkpoint selected on validation only)"
     else:
         best_epoch = args.epochs
         if validation_history:
-            best_validation = validation_history[-1]["overall"]
+            best_validation = _validation_score(
+                validation_history[-1], args.validation_selection_metric
+            )
         selection_message = f"Selected pre-specified final epoch: {best_epoch}"
         test_message = "--> Test Evaluation (one evaluation after the fixed schedule)"
+    selected_validation_overall = next(
+        (
+            record["overall"]
+            for record in validation_history
+            if record["epoch"] == best_epoch
+        ),
+        None,
+    )
     if device.type == "cuda":
         torch.cuda.synchronize(device)
     test_start = time.perf_counter()
@@ -748,9 +881,12 @@ def run_training():
             "test_size": len(test_ds),
             "validation_fraction": args.validation_fraction,
             "validation_seed": args.validation_seed,
+            "validation_source": validation_source,
+            "validation_selection_metric": args.validation_selection_metric,
             "checkpoint_selection": args.checkpoint_selection,
             "selected_epoch": best_epoch,
-            "selected_validation_overall": best_validation,
+            "selected_validation_score": best_validation,
+            "selected_validation_overall": selected_validation_overall,
             "validation_history": validation_history,
             "test": test_metrics,
             "resource_usage": resource_usage,
@@ -759,9 +895,12 @@ def run_training():
                 "lambda_edge": args.lambda_edge,
                 "lambda_consistency": args.lambda_consistency,
                 "use_goal_guidance": args.use_goal_guidance,
+                "goal_representation": args.goal_representation,
                 "use_aggregation_branch": args.use_aggregation_branch,
                 "use_step_branch": args.use_step_branch,
                 "use_relation_conditioning": args.use_relation_conditioning,
+                "data_order_seed": data_order_seed,
+                "optimization_seed": optimization_seed,
             },
         },
     )

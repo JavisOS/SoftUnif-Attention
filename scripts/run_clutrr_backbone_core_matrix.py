@@ -61,9 +61,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--checkpoint-selection",
         choices=("validation", "final"),
-        default="final",
+        default="validation",
     )
     parser.add_argument("--validation-fraction", type=float, default=0.0)
+    parser.add_argument(
+        "--external-validation-dataset",
+        default="data_db9b8f04",
+        help="Independent CLUTRR dataset whose deduplicated test split selects checkpoints.",
+    )
+    parser.add_argument(
+        "--validation-selection-metric",
+        choices=("overall", "unseen_4_10"),
+        default="unseen_4_10",
+    )
+    parser.add_argument(
+        "--trua-goal-representation",
+        choices=("object", "endpoint_pair"),
+        default="object",
+    )
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -84,6 +99,9 @@ def command_for(
     eval_batch_size: int,
     checkpoint_selection: str,
     validation_fraction: float,
+    external_validation_dataset: str | None,
+    validation_selection_metric: str,
+    trua_goal_representation: str,
     metrics_path: Path,
 ) -> list[str]:
     common = [
@@ -109,11 +127,22 @@ def command_for(
         "2027",
         "--checkpoint_selection",
         checkpoint_selection,
+        "--validation_selection_metric",
+        validation_selection_metric,
         "--gpus",
         str(gpu),
         "--metrics_out",
         str(metrics_path),
     ]
+    if external_validation_dataset:
+        common.extend(
+            [
+                "--external_validation_root",
+                data_root,
+                "--external_validation_dataset",
+                external_validation_dataset,
+            ]
+        )
     if core == "trua":
         return [
             sys.executable,
@@ -129,6 +158,8 @@ def command_for(
             "1.0",
             "--lambda_consistency",
             "0.0",
+            "--goal_representation",
+            trua_goal_representation,
         ]
 
     command = [
@@ -166,6 +197,20 @@ def write_json(path: Path, payload: dict) -> None:
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.external_validation_dataset and args.validation_fraction != 0.0:
+        raise ValueError(
+            "Use either external validation or a training-set holdout, not both"
+        )
+    if args.checkpoint_selection == "final" and args.external_validation_dataset:
+        raise ValueError(
+            "Fixed-final runs must disable --external-validation-dataset"
+        )
+    if (
+        args.checkpoint_selection == "validation"
+        and args.validation_fraction == 0.0
+        and not args.external_validation_dataset
+    ):
+        raise ValueError("Validation selection requires validation data")
     device_count = torch.cuda.device_count()
     invalid_gpus = [gpu for gpu in args.gpus if gpu < 0 or gpu >= device_count]
     if invalid_gpus:
@@ -176,6 +221,12 @@ def main() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     output_root = Path(args.output_root)
     output_root.mkdir(parents=True, exist_ok=True)
+    if args.external_validation_dataset:
+        validation_path = Path(args.data_root) / args.external_validation_dataset
+        if not validation_path.exists():
+            raise FileNotFoundError(
+                f"Missing external validation dataset: {validation_path}"
+            )
     backbones = [
         parse_backbone(specification)
         for specification in (args.backbone or DEFAULT_BACKBONES)
@@ -218,8 +269,20 @@ def main() -> None:
             "test_hops": list(range(2, 11)),
             "validation_fraction": args.validation_fraction,
             "validation_seed": 2027,
+            "validation_source": {
+                "type": "independent_generated_test_split",
+                "dataset": args.external_validation_dataset,
+                "deduplicate_exact_examples": True,
+                "formal_split_overlap": 0,
+            },
+            "validation_selection_metric": args.validation_selection_metric,
             "checkpoint_selection": args.checkpoint_selection,
             "test_evaluations_per_run": 1,
+            "randomness": {
+                "model_initialization_seed": "reported seed",
+                "data_order_seed": "reported seed + 271828",
+                "optimization_seed": "reported seed + 314159",
+            },
             "entity_unit_grounding": (
                 "mean the aligned subwords within the first textual "
                 "occurrence of each entity"
@@ -228,6 +291,7 @@ def main() -> None:
                 "self_attention_matched": ["transition", "edge"],
                 "trua": ["transition", "edge"],
             },
+            "trua_goal_representation": args.trua_goal_representation,
         },
         "jobs": [],
     }
@@ -246,6 +310,9 @@ def main() -> None:
             eval_batch_size=args.eval_batch_size,
             checkpoint_selection=args.checkpoint_selection,
             validation_fraction=args.validation_fraction,
+            external_validation_dataset=args.external_validation_dataset,
+            validation_selection_metric=args.validation_selection_metric,
+            trua_goal_representation=args.trua_goal_representation,
             metrics_path=job["metrics_path"],
         )
         manifest["jobs"].append(
@@ -297,6 +364,9 @@ def main() -> None:
                 eval_batch_size=args.eval_batch_size,
                 checkpoint_selection=args.checkpoint_selection,
                 validation_fraction=args.validation_fraction,
+                external_validation_dataset=args.external_validation_dataset,
+                validation_selection_metric=args.validation_selection_metric,
+                trua_goal_representation=args.trua_goal_representation,
                 metrics_path=job["metrics_path"],
             )
             log_handle = log_path.open("w", encoding="utf-8")

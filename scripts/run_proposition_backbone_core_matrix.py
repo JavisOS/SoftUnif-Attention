@@ -87,6 +87,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument(
+        "--limit-train",
+        type=int,
+        default=0,
+        help="Maximum training examples per task; 0 uses the complete split.",
+    )
+    parser.add_argument(
+        "--limit-test",
+        type=int,
+        default=0,
+        help="Maximum development/test examples per split; 0 uses complete splits.",
+    )
     parser.add_argument("--poll-seconds", type=float, default=20.0)
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -102,6 +114,8 @@ def command_for(
     epochs: int,
     batch_size: int,
     learning_rate: float,
+    limit_train: int,
+    limit_test: int,
     metrics_path: Path,
 ) -> list[str]:
     specification = DATASETS[dataset_name]
@@ -121,9 +135,9 @@ def command_for(
         "--lambda-evidence",
         str(lambda_evidence),
         "--limit-train",
-        "30000",
+        str(limit_train),
         "--limit-test",
-        "5000",
+        str(limit_test),
         "--epochs",
         str(epochs),
         "--batch-size",
@@ -171,6 +185,8 @@ def write_json(path: Path, payload: dict) -> None:
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.limit_train < 0 or args.limit_test < 0:
+        raise ValueError("Data limits must be nonnegative; use 0 for full splits")
     device_count = torch.cuda.device_count()
     invalid_gpus = [gpu for gpu in args.gpus if gpu < 0 or gpu >= device_count]
     if invalid_gpus:
@@ -231,10 +247,19 @@ def main() -> None:
         "gpus": args.gpus,
         "protocol": {
             "epochs": args.epochs,
-            "validation_fraction": 0.1,
-            "validation_seed": 2027,
+            "data_limits": {
+                "train": args.limit_train,
+                "development_and_each_test": args.limit_test,
+                "zero_means_complete_split": True,
+            },
+            "checkpoint_data": "dataset-provided development split",
             "checkpoint_selection": "validation accuracy; Evidence@1 tie-break",
             "test_evaluations_per_run": 1,
+            "randomness": {
+                "model_initialization_seed": "reported seed",
+                "data_order_seed": "reported seed + 271828",
+                "optimization_seed": "reported seed + 314159",
+            },
             "evidence_regularization": {
                 "encoder": 0.0,
                 "self_attention": 1.0,
@@ -293,6 +318,8 @@ def main() -> None:
                 epochs=args.epochs,
                 batch_size=args.batch_size,
                 learning_rate=args.lr,
+                limit_train=args.limit_train,
+                limit_test=args.limit_test,
                 metrics_path=job["metrics_path"],
             )
             log_handle = log_path.open("w", encoding="utf-8")

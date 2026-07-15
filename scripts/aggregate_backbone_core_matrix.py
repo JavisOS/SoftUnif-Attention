@@ -82,6 +82,22 @@ def collect_clutrr(root: Path) -> dict:
                 if key not in runs:
                     raise ValueError(f"Missing CLUTRR result: {key}")
                 selected.append(runs[key])
+            for run in selected:
+                if run.get("checkpoint_selection") != "validation":
+                    raise ValueError(
+                        f"CLUTRR run did not use validation selection: {backbone}/{core}"
+                    )
+                validation_source = run.get("validation_source") or {}
+                if (
+                    run.get("train_size") != 10094
+                    or run.get("validation_size", 0) <= 0
+                    or not 1 <= run.get("selected_epoch", 0) <= 10
+                    or validation_source.get("dataset") != "data_db9b8f04"
+                    or run.get("validation_selection_metric") != "unseen_4_10"
+                ):
+                    raise ValueError(
+                        f"CLUTRR run violates the independent-validation protocol: {backbone}/{core}"
+                    )
             test_sizes = {run["test_size"] for run in selected}
             if len(test_sizes) != 1:
                 raise ValueError(
@@ -126,6 +142,7 @@ def collect_proposition(roots: list[Path]) -> dict:
             runs[key] = result
 
     aggregated = {}
+    fingerprint_sets = {}
     split_names = {
         "proofwriter": ("depth-3", "depth-5"),
         "ruletaker": ("test",),
@@ -142,6 +159,31 @@ def collect_proposition(roots: list[Path]) -> dict:
                     if key not in runs:
                         raise ValueError(f"Missing proposition result: {key}")
                     selected.append(runs[key])
+                for run in selected:
+                    if run.get("epochs") != 10:
+                        raise ValueError(
+                            f"Proposition run is not 10 epochs: {dataset}/{backbone}/{core}"
+                        )
+                    if run.get("selection_rule") != "validation accuracy; Evidence@1 breaks exact ties":
+                        raise ValueError(
+                            f"Unexpected selection rule: {dataset}/{backbone}/{core}"
+                        )
+                    records = run.get("split_records")
+                    if not records:
+                        raise ValueError(
+                            f"Missing split fingerprints: {dataset}/{backbone}/{core}"
+                        )
+                    for split_name, record in (
+                        ("train", records["train"]),
+                        ("validation", records["validation"]),
+                    ):
+                        fingerprint_sets.setdefault((dataset, split_name), set()).add(
+                            record["sha256"]
+                        )
+                    for split_name, record in records["tests"].items():
+                        fingerprint_sets.setdefault(
+                            (dataset, f"test:{split_name}"), set()
+                        ).add(record["sha256"])
                 split_summaries = {}
                 for split_name in dataset_splits:
                     splits = [run["results"][split_name] for run in selected]
@@ -199,6 +241,17 @@ def collect_proposition(roots: list[Path]) -> dict:
                     "by_depth": primary["by_depth"],
                     "splits": split_summaries,
                 }
+    inconsistent = {
+        key: sorted(values)
+        for key, values in fingerprint_sets.items()
+        if len(values) != 1
+    }
+    if inconsistent:
+        raise ValueError(f"Proposition split-fingerprint mismatch: {inconsistent}")
+    aggregated["_data_audit"] = {
+        f"{dataset}/{split_name}": next(iter(values))
+        for (dataset, split_name), values in sorted(fingerprint_sets.items())
+    }
     return aggregated
 
 
@@ -293,9 +346,25 @@ def main() -> None:
     proposition = collect_proposition(
         [Path(root) for root in args.proposition_root]
     )
+    revisions = {
+        revision
+        for backbone in BACKBONES
+        for core in CORES
+        for revision in clutrr[backbone][core]["code_revisions"]
+    }
+    revisions.update(
+        revision
+        for dataset in ("proofwriter", "ruletaker")
+        for backbone in BACKBONES
+        for core in CORES
+        for revision in proposition[dataset][backbone][core]["code_revisions"]
+    )
+    if len(revisions) != 1:
+        raise ValueError(f"Expected one experiment revision, found {sorted(revisions)}")
     rows = table_rows(clutrr, proposition)
     payload = {
         "protocol": {
+            "code_revision": next(iter(revisions)),
             "seeds": list(SEEDS),
             "backbones": list(BACKBONES),
             "cores": list(CORES),
