@@ -99,6 +99,8 @@ def command_for(
         "0.1",
         "--validation_seed",
         "2027",
+        "--entity_pooling",
+        "multi_mention",
         "--gpus",
         str(gpu),
         "--metrics_out",
