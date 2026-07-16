@@ -982,6 +982,8 @@ def run_training():
                 "use_aggregation_branch": args.use_aggregation_branch,
                 "use_step_branch": args.use_step_branch,
                 "use_relation_conditioning": args.use_relation_conditioning,
+                "sparse_top_k": args.sparse_top_k,
+                "force_gold_edges": args.force_gold_edges,
                 "data_order_seed": data_order_seed,
                 "optimization_seed": optimization_seed,
                 "reverse_query_eval": args.reverse_query_eval,

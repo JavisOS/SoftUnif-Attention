@@ -94,6 +94,8 @@ def command(
         "1.0",
         "--lambda_consistency",
         "0.0",
+        "--sparse_top_k",
+        "0",
         "--goal_representation",
         (
             "encoded_query"
