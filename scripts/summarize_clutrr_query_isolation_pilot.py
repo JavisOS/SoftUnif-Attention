@@ -16,7 +16,7 @@ VARIANTS = (
     "separate_unguided",
 )
 SEEDS = (0, 1, 42)
-METRICS = ("overall", "long_hop", "transition_at_1")
+METRICS = ("development", "overall", "long_hop", "transition_at_1")
 CONTRASTS = {
     "explicit_goal_with_joint_encoding": ("joint_guided", "joint_unguided"),
     "explicit_goal_with_separate_encoding": (
@@ -39,6 +39,12 @@ def mean_sd(values: list[float]) -> dict:
     }
 
 
+def metric_value(payload: dict, metric: str) -> float:
+    if metric == "development":
+        return payload["selected_validation_score"]
+    return payload["test"][metric]
+
+
 def load_runs(root: Path) -> tuple[dict, str]:
     runs = {}
     revisions = set()
@@ -50,7 +56,9 @@ def load_runs(root: Path) -> tuple[dict, str]:
             revisions.add(payload["code_revision"])
             configuration = payload["configuration"]
             expected_mode = "separate" if variant.startswith("separate") else "joint"
-            expected_guidance = variant.endswith("guided") and not variant.endswith("unguided")
+            expected_guidance = variant.endswith("guided") and not variant.endswith(
+                "unguided"
+            )
             if configuration.get("unit_encoding_mode") != expected_mode:
                 raise ValueError(f"Unexpected unit encoding in {path}")
             if configuration.get("use_goal_guidance") is not expected_guidance:
@@ -71,7 +79,7 @@ def main() -> None:
     for variant in VARIANTS:
         aggregates[variant] = {
             metric: mean_sd(
-                [runs[variant][seed]["test"][metric] for seed in SEEDS]
+                [metric_value(runs[variant][seed], metric) for seed in SEEDS]
             )
             for metric in METRICS
         }
@@ -81,8 +89,8 @@ def main() -> None:
         contrasts[name] = {
             metric: mean_sd(
                 [
-                    runs[left][seed]["test"][metric]
-                    - runs[right][seed]["test"][metric]
+                    metric_value(runs[left][seed], metric)
+                    - metric_value(runs[right][seed], metric)
                     for seed in SEEDS
                 ]
             )
@@ -105,8 +113,8 @@ def main() -> None:
         "",
         f"Code revision: `{revision}`",
         "",
-        "| Variant | Overall | Long-hop | Transition@1 |",
-        "|---|---:|---:|---:|",
+        "| Variant | Development | Overall | Long-hop | Transition@1 |",
+        "|---|---:|---:|---:|---:|",
     ]
     for variant in VARIANTS:
         cells = []
@@ -119,8 +127,9 @@ def main() -> None:
             "",
             "Paired contrasts use the same seed and report left minus right.",
             "",
-            "| Contrast | Overall delta | Long-hop delta | Transition@1 delta |",
-            "|---|---:|---:|---:|",
+            "| Contrast | Development delta | Overall delta | Long-hop delta | "
+            "Transition@1 delta |",
+            "|---|---:|---:|---:|---:|",
         ]
     )
     for name in CONTRASTS:
