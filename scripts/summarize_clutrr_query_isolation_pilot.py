@@ -56,11 +56,14 @@ def load_runs(root: Path) -> tuple[dict, str]:
             revisions.add(payload["code_revision"])
             configuration = payload["configuration"]
             expected_mode = "separate" if variant.startswith("separate") else "joint"
+            expected_goal = "encoded_query" if expected_mode == "separate" else "object"
             expected_guidance = variant.endswith("guided") and not variant.endswith(
                 "unguided"
             )
             if configuration.get("unit_encoding_mode") != expected_mode:
                 raise ValueError(f"Unexpected unit encoding in {path}")
+            if configuration.get("goal_representation") != expected_goal:
+                raise ValueError(f"Unexpected goal representation in {path}")
             if configuration.get("use_goal_guidance") is not expected_guidance:
                 raise ValueError(f"Unexpected goal-guidance setting in {path}")
             runs[variant][seed] = payload

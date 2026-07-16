@@ -387,7 +387,7 @@ def build_arg_parser(defaults=None):
     )
     parser.add_argument(
         "--goal_representation",
-        choices=("object", "endpoint_pair"),
+        choices=("object", "endpoint_pair", "encoded_query"),
         default=defaults["goal_representation"],
         help="Entity adapter representation supplied as the query goal.",
     )

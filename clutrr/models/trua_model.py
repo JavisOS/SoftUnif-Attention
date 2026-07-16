@@ -58,12 +58,19 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
             raise ValueError(f"Unsupported edge_supervision_target: {edge_supervision_target}")
         if pair_feature_mode not in {"product", "product_diff"}:
             raise ValueError(f"Unsupported pair_feature_mode: {pair_feature_mode}")
-        if goal_representation not in {"object", "endpoint_pair"}:
+        if goal_representation not in {"object", "endpoint_pair", "encoded_query"}:
             raise ValueError(
                 f"Unsupported goal representation: {goal_representation}"
             )
         if unit_encoding_mode not in {"joint", "separate"}:
             raise ValueError(f"Unsupported unit encoding mode: {unit_encoding_mode}")
+        if (unit_encoding_mode == "separate") != (
+            goal_representation == "encoded_query"
+        ):
+            raise ValueError(
+                "Separate unit encoding and encoded-query goal representation "
+                "must be enabled together"
+            )
 
         self.prediction_head = prediction_head
         self.consistency_mode = consistency_mode
@@ -129,7 +136,7 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
                 nn.Linear(self.hidden_size * 3, self.hidden_size),
                 nn.Tanh(),
             )
-        if self.unit_encoding_mode == "separate":
+        if self.goal_representation == "encoded_query":
             self.query_goal_proj = nn.Sequential(
                 nn.Linear(self.hidden_size, self.hidden_size),
                 nn.Tanh(),
@@ -177,7 +184,7 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
 
         entity_embs = self.get_entity_embeddings(sequence_for_heads, entity_spans)
         independently_encoded_goal = None
-        if self.unit_encoding_mode == "separate":
+        if self.goal_representation == "encoded_query":
             if query_input_ids is None or query_attention_mask is None:
                 raise ValueError("Separate unit encoding requires query inputs")
             query_sequence = self.encoder(

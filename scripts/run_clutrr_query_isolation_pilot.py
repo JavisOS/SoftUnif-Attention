@@ -95,7 +95,11 @@ def command(
         "--lambda_consistency",
         "0.0",
         "--goal_representation",
-        "object",
+        (
+            "encoded_query"
+            if variant["unit_encoding_mode"] == "separate"
+            else "object"
+        ),
         "--unit_encoding_mode",
         variant["unit_encoding_mode"],
         "--gpus",
