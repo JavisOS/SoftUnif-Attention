@@ -96,8 +96,12 @@ def test_joint_unit_encoding_preserves_native_sequence_pair_input():
 
 def test_unit_encoding_mode_is_exposed_by_training_cli():
     parser = build_arg_parser()
-    assert parser.parse_args([]).unit_encoding_mode == "joint"
-    assert parser.parse_args(["--unit_encoding_mode", "separate"]).unit_encoding_mode == "separate"
+    defaults = parser.parse_args([])
+    assert defaults.unit_encoding_mode == "joint"
+    assert defaults.sparse_top_k == 0
+    assert defaults.force_gold_edges is False
+    separate = parser.parse_args(["--unit_encoding_mode", "separate"])
+    assert separate.unit_encoding_mode == "separate"
 
 
 def test_goal_embedding_changes_step_scores_only_when_enabled():
