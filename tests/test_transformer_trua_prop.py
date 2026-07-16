@@ -19,6 +19,24 @@ class _DummyEncoder(nn.Module):
         return SimpleNamespace(last_hidden_state=self.embedding(input_ids))
 
 
+class _RecordingTokenizer:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, first, second=None, **kwargs):
+        self.calls.append((first, second, kwargs))
+        batch_size = len(first)
+        result = {
+            "input_ids": torch.ones(batch_size, 3, dtype=torch.long),
+            "attention_mask": torch.ones(batch_size, 3, dtype=torch.long),
+        }
+        if second is not None:
+            result["token_type_ids"] = torch.tensor(
+                [[0, 1, 1]] * batch_size, dtype=torch.long
+            )
+        return result
+
+
 def test_encoder_core_returns_answer_logits_without_selection_scores(monkeypatch):
     monkeypatch.setattr(
         transformer_trua_prop.AutoModel,
@@ -50,6 +68,36 @@ def test_validation_selection_key_handles_missing_evidence_metric():
     assert transformer_trua_prop.validation_selection_key(
         {"accuracy": 0.75, "evidence_at_1": None}
     ) == (0.75, 0.0)
+
+
+def test_collate_uses_tokenizer_native_context_query_pairs():
+    tokenizer = _RecordingTokenizer()
+    samples = [
+        {
+            "context": "Fact one. Fact two.",
+            "query": "Query one?",
+            "sentences": ["Fact one.", "Fact two."],
+            "trace_labels": [1, 0],
+            "label": 1,
+            "depth": 1,
+        },
+        {
+            "context": "Fact three.",
+            "query": "Query two?",
+            "sentences": ["Fact three."],
+            "trace_labels": [1],
+            "label": 2,
+            "depth": 0,
+        },
+    ]
+    dataset = transformer_trua_prop.TextEvidenceDataset(samples, tokenizer)
+
+    batch = dataset.collate([dataset[0], dataset[1]])
+
+    first, second, _ = tokenizer.calls[0]
+    assert first == ["Fact one. Fact two.", "Fact three."]
+    assert second == ["Query one?", "Query two?"]
+    assert batch["text_token_type_ids"].tolist() == [[0, 1, 1], [0, 1, 1]]
 
 
 def test_proofwriter_classifier_uses_three_output_labels(monkeypatch):

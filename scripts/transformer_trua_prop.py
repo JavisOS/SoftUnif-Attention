@@ -127,7 +127,7 @@ class TextEvidenceDataset(Dataset):
         if len(evidence) < len(sentences):
             evidence = evidence + [0] * (len(sentences) - len(evidence))
         return {
-            "text": x["context"] + " [SEP] " + x["query"],
+            "context": x["context"],
             "query": x["query"],
             "sentences": sentences,
             "evidence": evidence,
@@ -137,7 +137,14 @@ class TextEvidenceDataset(Dataset):
 
     def collate(self, batch):
         tok = self.tokenizer
-        texts = tok([x["text"] for x in batch], padding=True, truncation=True, max_length=self.max_len, return_tensors="pt")
+        texts = tok(
+            [x["context"] for x in batch],
+            [x["query"] for x in batch],
+            padding=True,
+            truncation=True,
+            max_length=self.max_len,
+            return_tensors="pt",
+        )
         queries = tok([x["query"] for x in batch], padding=True, truncation=True, max_length=64, return_tensors="pt")
         flat_sents = []
         sent_lens = []
@@ -154,7 +161,7 @@ class TextEvidenceDataset(Dataset):
             mask[i, :n] = True
             evidence[i, :n] = torch.tensor(x["evidence"][:n], dtype=torch.float32)
             cursor += n
-        return {
+        result = {
             "text_ids": texts["input_ids"],
             "text_mask": texts["attention_mask"],
             "query_ids": queries["input_ids"],
@@ -167,6 +174,9 @@ class TextEvidenceDataset(Dataset):
             "label": torch.tensor([x["label"] for x in batch], dtype=torch.long),
             "depth": torch.tensor([x["depth"] for x in batch], dtype=torch.long),
         }
+        if "token_type_ids" in texts:
+            result["text_token_type_ids"] = texts["token_type_ids"]
+        return result
 
 
 class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
@@ -232,12 +242,22 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
             nn.Linear(hidden, num_labels),
         )
 
-    def encode_cls(self, input_ids, attention_mask):
-        out = self.encoder(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
+    def encode_cls(self, input_ids, attention_mask, token_type_ids=None):
+        encoder_inputs = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+        }
+        if token_type_ids is not None:
+            encoder_inputs["token_type_ids"] = token_type_ids
+        out = self.encoder(**encoder_inputs).last_hidden_state
         return out[:, 0]
 
     def forward(self, batch):
-        text = self.encode_cls(batch["text_ids"], batch["text_mask"])
+        text = self.encode_cls(
+            batch["text_ids"],
+            batch["text_mask"],
+            batch.get("text_token_type_ids"),
+        )
         if self.core_type == "encoder":
             return self.classifier(text), None
 
@@ -476,6 +496,7 @@ def run(train, validation, tests, args):
         "test_qdeps": args.test_qdeps,
         "max_sentences": args.max_sents,
         "max_context_tokens": args.max_len,
+        "context_query_encoding": "tokenizer-native sequence pair",
         "input_truncation_allowed": args.allow_input_truncation,
         "train": len(train),
         "validation": len(validation),
