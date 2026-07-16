@@ -29,6 +29,12 @@ CONTRASTS = {
         "joint_unguided",
     ),
 }
+VARIANT_LABELS = {
+    "joint_guided": "Joint + goal",
+    "joint_unguided": "Joint, no goal",
+    "separate_guided": "Separate + goal",
+    "separate_unguided": "Separate, no goal",
+}
 
 
 def mean_sd(values: list[float]) -> dict:
@@ -43,6 +49,12 @@ def metric_value(payload: dict, metric: str) -> float:
     if metric == "development":
         return payload["selected_validation_score"]
     return payload["test"][metric]
+
+
+def latex_value(item: dict) -> str:
+    mean = f"{item['mean']:.3f}".removeprefix("0")
+    sd = f"{item['sd']:.3f}".removeprefix("0")
+    return f"${mean}{{\\pm}}{sd}$"
 
 
 def load_runs(root: Path) -> tuple[dict, str]:
@@ -143,6 +155,17 @@ def main() -> None:
         lines.append(f"| {name} | " + " | ".join(cells) + " |")
     (args.root / "SUMMARY.md").write_text(
         "\n".join(lines) + "\n",
+        encoding="utf-8",
+    )
+
+    tex_rows = []
+    for variant in VARIANTS:
+        cells = [latex_value(aggregates[variant][metric]) for metric in METRICS]
+        tex_rows.append(
+            f"{VARIANT_LABELS[variant]} & " + " & ".join(cells) + r" \\"
+        )
+    (args.root / "clutrr_query_isolation_rows.tex").write_text(
+        "\n".join(tex_rows) + "\n",
         encoding="utf-8",
     )
 
