@@ -19,6 +19,17 @@ def _move_batch_to_device(batch: dict, device: torch.device, skip_keys: set[str]
     return moved
 
 
+def _query_inputs(batch: dict, prefix: str = "") -> dict:
+    input_ids = batch.get(f"{prefix}query_input_ids")
+    attention_mask = batch.get(f"{prefix}query_attention_mask")
+    if input_ids is None or attention_mask is None:
+        return {}
+    return {
+        "query_input_ids": input_ids,
+        "query_attention_mask": attention_mask,
+    }
+
+
 def _count_reference_transition_hits(sparse_edges, path_node_ids):
     """Count top-1 destination hits over all annotated path transitions."""
     if sparse_edges is None or path_node_ids is None:
@@ -88,6 +99,7 @@ def evaluate_robustness(model, loader, device):
                 attention_mask=batch["attention_mask"],
                 entity_spans=batch["entity_spans"],
                 query_indices=batch["query_indices"],
+                **_query_inputs(batch),
             )
             preds_base = torch.argmax(logits_base, dim=1)
             batch_transition_hits, batch_transition_total = _count_reference_transition_hits(
@@ -102,6 +114,7 @@ def evaluate_robustness(model, loader, device):
                 attention_mask=batch["aug_attention_mask"],
                 entity_spans=batch["aug_entity_spans"],
                 query_indices=batch["query_indices"],
+                **_query_inputs(batch, prefix="aug_"),
             )
             preds_mod = torch.argmax(logits_mod, dim=1)
 

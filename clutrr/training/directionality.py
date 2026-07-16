@@ -23,11 +23,18 @@ def _move_batch(batch: dict, device: torch.device) -> dict:
 
 
 def _predict(base_model: nn.Module, batch: dict) -> torch.Tensor:
+    query_inputs = {}
+    if batch.get("query_input_ids") is not None:
+        query_inputs = {
+            "query_input_ids": batch["query_input_ids"],
+            "query_attention_mask": batch["query_attention_mask"],
+        }
     logits, _, _ = base_model.compute_logits(
         input_ids=batch["input_ids"],
         attention_mask=batch["attention_mask"],
         entity_spans=batch["entity_spans"],
         query_indices=batch["query_indices"],
+        **query_inputs,
     )
     return logits.argmax(dim=1)
 

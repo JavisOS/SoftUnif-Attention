@@ -5,10 +5,19 @@ from clutrr.models.backbones import is_decoder_only_model
 
 
 class TruaBatchCollator:
-    def __init__(self, tokenizer, device=None, model_type="roberta"):
+    def __init__(
+        self,
+        tokenizer,
+        device=None,
+        model_type="roberta",
+        unit_encoding_mode="joint",
+    ):
         self.tokenizer = tokenizer
         self.model_type = model_type
         self.decoder_only = is_decoder_only_model(model_type)
+        if unit_encoding_mode not in {"joint", "separate"}:
+            raise ValueError(f"Unsupported unit encoding mode: {unit_encoding_mode}")
+        self.unit_encoding_mode = unit_encoding_mode
 
     @staticmethod
     def _format_decoder_input(story, query_a, query_b):
@@ -31,7 +40,27 @@ class TruaBatchCollator:
         hops = torch.tensor([b["hops"] for b in batch], dtype=torch.long)
         query_indices = torch.tensor([b["query_indices"] for b in batch], dtype=torch.long)
 
-        if self.decoder_only:
+        query_enc = None
+        if self.unit_encoding_mode == "separate":
+            # Preserve the query string used by joint encoding, but keep it out
+            # of the sequence from which text-grounded entity units are pooled.
+            enc = self.tokenizer(
+                stories,
+                padding=True,
+                truncation=True,
+                max_length=512,
+                return_tensors="pt",
+                add_special_tokens=True,
+            )
+            query_enc = self.tokenizer(
+                queries,
+                padding=True,
+                truncation=True,
+                max_length=64,
+                return_tensors="pt",
+                add_special_tokens=True,
+            )
+        elif self.decoder_only:
             prompts = [
                 self._format_decoder_input(b["story"], b["query"][0], b["query"][1])
                 for b in batch
@@ -56,10 +85,28 @@ class TruaBatchCollator:
             )
 
         enc_aug = None
+        query_enc_aug = None
         if "aug_story" in batch[0]:
             aug_stories = [b["aug_story"] for b in batch]
             aug_queries = [f"{b['aug_query'][0]} and {b['aug_query'][1]}" for b in batch]
-            if self.decoder_only:
+            if self.unit_encoding_mode == "separate":
+                enc_aug = self.tokenizer(
+                    aug_stories,
+                    padding=True,
+                    truncation=True,
+                    max_length=512,
+                    return_tensors="pt",
+                    add_special_tokens=True,
+                )
+                query_enc_aug = self.tokenizer(
+                    aug_queries,
+                    padding=True,
+                    truncation=True,
+                    max_length=64,
+                    return_tensors="pt",
+                    add_special_tokens=True,
+                )
+            elif self.decoder_only:
                 aug_prompts = [
                     self._format_decoder_input(b["aug_story"], b["aug_query"][0], b["aug_query"][1])
                     for b in batch
@@ -82,7 +129,6 @@ class TruaBatchCollator:
                     return_tensors="pt",
                     add_special_tokens=True,
                 )
-
         max_path_len = max([len(b["path_indices"]) for b in batch])
         path_node_ids = torch.full((len(batch), max_path_len), -1, dtype=torch.long)
 
@@ -117,6 +163,8 @@ class TruaBatchCollator:
         return {
             "input_ids": enc.input_ids,
             "attention_mask": enc.attention_mask,
+            "query_input_ids": query_enc.input_ids if query_enc else None,
+            "query_attention_mask": query_enc.attention_mask if query_enc else None,
             "labels": targets,
             "hops": hops,
             "path_node_ids": path_node_ids,
@@ -126,5 +174,9 @@ class TruaBatchCollator:
             "raw_batch": batch,
             "aug_input_ids": enc_aug.input_ids if enc_aug else None,
             "aug_attention_mask": enc_aug.attention_mask if enc_aug else None,
+            "aug_query_input_ids": query_enc_aug.input_ids if query_enc_aug else None,
+            "aug_query_attention_mask": (
+                query_enc_aug.attention_mask if query_enc_aug else None
+            ),
             "aug_entity_spans": aug_entity_spans if enc_aug else None,
         }

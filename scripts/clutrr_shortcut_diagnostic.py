@@ -197,7 +197,11 @@ class TruaDiagnosticWrapper:
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
-        self.collator = TruaBatchCollator(tokenizer, model_type=model.model_type)
+        self.collator = TruaBatchCollator(
+            tokenizer,
+            model_type=model.model_type,
+            unit_encoding_mode=getattr(model, "unit_encoding_mode", "joint"),
+        )
         self.mask_id = tokenizer.mask_token_id
         self.special_ids = set(tokenizer.all_special_ids)
 
@@ -207,6 +211,8 @@ class TruaDiagnosticWrapper:
             attention_mask=batch["attention_mask"],
             entity_spans=batch["entity_spans"],
             query_indices=batch["query_indices"],
+            query_input_ids=batch.get("query_input_ids"),
+            query_attention_mask=batch.get("query_attention_mask"),
             path_node_ids=batch.get("path_node_ids"),
         )
         return logits

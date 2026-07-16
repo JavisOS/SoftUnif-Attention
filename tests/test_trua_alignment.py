@@ -4,6 +4,8 @@ from pathlib import Path
 
 import torch
 
+from clutrr.cli.train import build_arg_parser
+from clutrr.data.trua_collator import TruaBatchCollator
 from clutrr.models.relation_attention import RelationConditionedEntityAttention
 from clutrr.models.trua_core import ENTITY_PATH_ADAPTER, PROPOSITION_EVIDENCE_ADAPTER
 from clutrr.training.model_selection import stratified_train_validation_split
@@ -21,6 +23,81 @@ from generic_trua_prop import _first_existing
 def _dense_hop_scores(edges, unit_count):
     dense = edges["hop_logits"].new_full(edges["hop_logits"].shape[:2] + (unit_count,), -1e4)
     return dense.scatter(2, edges["edge_index"], edges["hop_logits"])
+
+
+class _MockEncoding(dict):
+    def __getattr__(self, key):
+        return self[key]
+
+
+class _RecordingTokenizer:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, texts, text_pair=None, **kwargs):
+        texts = list(texts)
+        paired = list(text_pair) if text_pair is not None else None
+        self.calls.append((texts, paired, kwargs.get("max_length")))
+        width = 6
+        return _MockEncoding(
+            input_ids=torch.ones(len(texts), width, dtype=torch.long),
+            attention_mask=torch.ones(len(texts), width, dtype=torch.long),
+        )
+
+
+def _collator_example():
+    return {
+        "story": "Alice is Bob's mother.",
+        "query": ("Alice", "Bob"),
+        "target_id": 0,
+        "hops": 2,
+        "query_indices": (0, 1),
+        "path_indices": [0, 1],
+        "path_rel_labels": [],
+        "num_nodes": 2,
+        "node_spans": [(1, 2), (4, 5)],
+    }
+
+
+def test_separate_unit_encoding_keeps_query_out_of_unit_sequence():
+    tokenizer = _RecordingTokenizer()
+    collator = TruaBatchCollator(
+        tokenizer,
+        model_type="bert",
+        unit_encoding_mode="separate",
+    )
+
+    output = collator([_collator_example()])
+
+    assert tokenizer.calls == [
+        (["Alice is Bob's mother."], None, 512),
+        (["Alice and Bob"], None, 64),
+    ]
+    assert output["query_input_ids"] is not None
+    assert output["query_attention_mask"] is not None
+
+
+def test_joint_unit_encoding_preserves_native_sequence_pair_input():
+    tokenizer = _RecordingTokenizer()
+    collator = TruaBatchCollator(
+        tokenizer,
+        model_type="bert",
+        unit_encoding_mode="joint",
+    )
+
+    output = collator([_collator_example()])
+
+    assert tokenizer.calls == [
+        (["Alice is Bob's mother."], ["Alice and Bob"], 512),
+    ]
+    assert output["query_input_ids"] is None
+    assert output["query_attention_mask"] is None
+
+
+def test_unit_encoding_mode_is_exposed_by_training_cli():
+    parser = build_arg_parser()
+    assert parser.parse_args([]).unit_encoding_mode == "joint"
+    assert parser.parse_args(["--unit_encoding_mode", "separate"]).unit_encoding_mode == "separate"
 
 
 def test_goal_embedding_changes_step_scores_only_when_enabled():

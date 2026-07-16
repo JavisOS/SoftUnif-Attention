@@ -73,6 +73,7 @@ BASE_TRAIN_DEFAULTS = {
     "relation_rank": 64,
     "use_goal_guidance": True,
     "goal_representation": "object",
+    "unit_encoding_mode": "joint",
     "use_aggregation_branch": True,
     "use_step_branch": True,
     "validation_fraction": 0.1,
@@ -391,6 +392,15 @@ def build_arg_parser(defaults=None):
         help="Entity adapter representation supplied as the query goal.",
     )
     parser.add_argument(
+        "--unit_encoding_mode",
+        choices=("joint", "separate"),
+        default=defaults["unit_encoding_mode"],
+        help=(
+            "Encode story and query jointly, or derive entity units from a "
+            "story-only sequence and the goal from a separately encoded query."
+        ),
+    )
+    parser.add_argument(
         "--use_aggregation_branch",
         action=argparse.BooleanOptionalAction,
         default=defaults["use_aggregation_branch"],
@@ -538,6 +548,7 @@ def run_training():
             f"relation_conditioning={args.use_relation_conditioning}, "
             f"goal_guidance={args.use_goal_guidance}, aggregation_branch={args.use_aggregation_branch}, "
             f"goal_representation={args.goal_representation}, "
+            f"unit_encoding={args.unit_encoding_mode}, "
             f"step_branch={args.use_step_branch}, "
             f"edge_target={args.edge_supervision_target}, pair_features={args.pair_feature_mode}, "
             f"consistency={args.consistency_mode}, sparse_top_k={args.sparse_top_k}, "
@@ -638,7 +649,12 @@ def run_training():
                 f"{len(reverse_query_ds)} != {len(test_ds)}"
             )
 
-    collator = TruaBatchCollator(tokenizer, device, model_type=args.model_type)
+    collator = TruaBatchCollator(
+        tokenizer,
+        device,
+        model_type=args.model_type,
+        unit_encoding_mode=args.unit_encoding_mode,
+    )
     data_order_seed = args.seed + 271828
     data_order_generator = torch.Generator()
     data_order_generator.manual_seed(data_order_seed)
@@ -693,6 +709,7 @@ def run_training():
         use_relation_conditioning=args.use_relation_conditioning,
         use_goal_guidance=args.use_goal_guidance,
         goal_representation=args.goal_representation,
+        unit_encoding_mode=args.unit_encoding_mode,
         use_aggregation_branch=args.use_aggregation_branch,
         use_step_branch=args.use_step_branch,
         edge_supervision_target=args.edge_supervision_target,
@@ -961,6 +978,7 @@ def run_training():
                 "lambda_consistency": args.lambda_consistency,
                 "use_goal_guidance": args.use_goal_guidance,
                 "goal_representation": args.goal_representation,
+                "unit_encoding_mode": args.unit_encoding_mode,
                 "use_aggregation_branch": args.use_aggregation_branch,
                 "use_step_branch": args.use_step_branch,
                 "use_relation_conditioning": args.use_relation_conditioning,

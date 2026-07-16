@@ -26,6 +26,7 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
         use_relation_conditioning=True,
         use_goal_guidance=True,
         goal_representation="object",
+        unit_encoding_mode="joint",
         use_aggregation_branch=True,
         use_step_branch=True,
         edge_supervision_target="latent",
@@ -61,12 +62,15 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
             raise ValueError(
                 f"Unsupported goal representation: {goal_representation}"
             )
+        if unit_encoding_mode not in {"joint", "separate"}:
+            raise ValueError(f"Unsupported unit encoding mode: {unit_encoding_mode}")
 
         self.prediction_head = prediction_head
         self.consistency_mode = consistency_mode
         self.edge_supervision_target = edge_supervision_target
         self.pair_feature_mode = pair_feature_mode
         self.goal_representation = goal_representation
+        self.unit_encoding_mode = unit_encoding_mode
 
         self.encoder = build_backbone_model(
             self.model_type,
@@ -125,6 +129,11 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
                 nn.Linear(self.hidden_size * 3, self.hidden_size),
                 nn.Tanh(),
             )
+        if self.unit_encoding_mode == "separate":
+            self.query_goal_proj = nn.Sequential(
+                nn.Linear(self.hidden_size, self.hidden_size),
+                nn.Tanh(),
+            )
 
     def _build_forced_edge_index(self, path_node_ids, max_entities):
         if path_node_ids is None:
@@ -154,6 +163,8 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
         attention_mask,
         entity_spans,
         query_indices,
+        query_input_ids=None,
+        query_attention_mask=None,
         path_node_ids=None,
     ):
         out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
@@ -165,12 +176,28 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
         logits_cls = self.classifier(cls_output)
 
         entity_embs = self.get_entity_embeddings(sequence_for_heads, entity_spans)
+        independently_encoded_goal = None
+        if self.unit_encoding_mode == "separate":
+            if query_input_ids is None or query_attention_mask is None:
+                raise ValueError("Separate unit encoding requires query inputs")
+            query_sequence = self.encoder(
+                input_ids=query_input_ids,
+                attention_mask=query_attention_mask,
+            ).last_hidden_state.to(head_dtype)
+            query_pooled = self._pool_sequence(
+                query_sequence,
+                query_attention_mask,
+            )
+            independently_encoded_goal = self.query_goal_proj(query_pooled)
         valid_mask = entity_spans[:, :, 0] != -1
         forced_edges = None
         if self.training and self.force_gold_edges:
             forced_edges = self._build_forced_edge_index(path_node_ids, entity_spans.size(1))
 
-        if self.goal_representation == "endpoint_pair":
+        if independently_encoded_goal is not None:
+            goal_embedding = independently_encoded_goal
+            obj_indices = None
+        elif self.goal_representation == "endpoint_pair":
             goal_embedding = self._build_query_context(entity_embs, query_indices)
             obj_indices = None
         else:
@@ -478,6 +505,8 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
             attention_mask=attention_mask,
             entity_spans=entity_spans,
             query_indices=query_indices,
+            query_input_ids=batch_data.get("query_input_ids"),
+            query_attention_mask=batch_data.get("query_attention_mask"),
             path_node_ids=path_node_ids,
         )
         main_loss = nn.functional.cross_entropy(logits_orig, labels)
@@ -489,6 +518,8 @@ class TruaReasonerModel(TransitionRegularizedUnitAttentionCore):
                 attention_mask=batch_data["aug_attention_mask"],
                 entity_spans=batch_data["aug_entity_spans"],
                 query_indices=query_indices,
+                query_input_ids=batch_data.get("aug_query_input_ids"),
+                query_attention_mask=batch_data.get("aug_query_attention_mask"),
                 path_node_ids=path_node_ids,
             )
             loss_aug_ce = nn.functional.cross_entropy(logits_aug, labels)
