@@ -22,6 +22,7 @@ from clutrr.training.model_selection import (
     write_metrics,
 )
 from clutrr.training.robustness import evaluate_robustness
+from clutrr.training.directionality import evaluate_paired_query_direction
 from clutrr.utils.seed import set_seed
 
 
@@ -102,6 +103,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lambda_edge", type=float, default=0.0)
     parser.add_argument("--gpus", default="0")
     parser.add_argument("--metrics_out", required=True)
+    parser.add_argument(
+        "--reverse_query_eval",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Also evaluate the selected checkpoint on audited reversed queries.",
+    )
     return parser
 
 
@@ -196,6 +203,26 @@ def run_training() -> None:
         augment_seed=999,
     )
     test_data.data = [item for item in test_data.data if item is not None]
+    reverse_query_data = None
+    if args.reverse_query_eval:
+        reverse_query_data = TruaClutrrDataset(
+            args.root,
+            args.dataset,
+            "test",
+            args.test_data_percentage,
+            tokenizer=tokenizer,
+            augment=True,
+            augment_seed=999,
+            reverse_query=True,
+        )
+        reverse_query_data.data = [
+            item for item in reverse_query_data.data if item is not None
+        ]
+        if len(reverse_query_data) != len(test_data):
+            raise ValueError(
+                "Reversed-query evaluation must preserve the complete test set: "
+                f"{len(reverse_query_data)} != {len(test_data)}"
+            )
 
     collator = TruaBatchCollator(tokenizer, device, model_type=args.model_type)
     data_order_seed = args.seed + 271828
@@ -225,6 +252,15 @@ def run_training() -> None:
         collate_fn=collator,
         num_workers=args.num_workers,
     )
+    reverse_query_loader = None
+    if reverse_query_data is not None:
+        reverse_query_loader = DataLoader(
+            reverse_query_data,
+            batch_size=args.eval_batch_size,
+            shuffle=False,
+            collate_fn=collator,
+            num_workers=args.num_workers,
+        )
 
     model = ControlledClutrrBaseline(
         device,
@@ -335,6 +371,25 @@ def run_training() -> None:
     if device.type == "cuda":
         torch.cuda.synchronize(device)
     test_seconds = time.perf_counter() - test_start
+    reverse_query_metrics = None
+    reverse_query_seconds = 0.0
+    if reverse_query_loader is not None:
+        reverse_start = time.perf_counter()
+        reverse_metrics = evaluate_robustness(model, reverse_query_loader, device)
+        paired_metrics = evaluate_paired_query_direction(
+            model,
+            test_loader,
+            reverse_query_loader,
+            device,
+        )
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        reverse_query_seconds = time.perf_counter() - reverse_start
+        reverse_query_metrics = {
+            "semantics": "same story; swapped query endpoints; inverse kinship label",
+            "reverse_test": reverse_metrics,
+            "paired": paired_metrics,
+        }
 
     processed_training_examples = len(train_data) * args.epochs
     resource_usage = {
@@ -343,6 +398,7 @@ def run_training() -> None:
         "peak_allocated_memory_gib": peak_memory_gib,
         "training_seconds": training_seconds,
         "test_seconds": test_seconds,
+        "reverse_query_test_seconds": reverse_query_seconds,
         "training_examples_per_second": processed_training_examples / max(training_seconds, 1e-9),
     }
     result = {
@@ -367,6 +423,7 @@ def run_training() -> None:
         "selected_validation_overall": selected_validation_overall,
         "validation_history": validation_history,
         "test": test_metrics,
+        "reverse_query_evaluation": reverse_query_metrics,
         "resource_usage": resource_usage,
         "configuration": {
             "epochs": args.epochs,
@@ -381,6 +438,7 @@ def run_training() -> None:
             "lambda_edge": args.lambda_edge,
             "data_order_seed": data_order_seed,
             "optimization_seed": optimization_seed,
+            "reverse_query_eval": args.reverse_query_eval,
         },
     }
     write_metrics(args.metrics_out, result)
@@ -390,6 +448,14 @@ def run_training() -> None:
         f"short={test_metrics['short_hop']:.4f}, long={test_metrics['long_hop']:.4f}; "
         f"peak={peak_memory_gib:.2f} GiB, throughput={resource_usage['training_examples_per_second']:.2f} ex/s"
     )
+    if reverse_query_metrics is not None:
+        print(
+            "Reversed query: "
+            f"acc={reverse_query_metrics['reverse_test']['overall']:.4f}, "
+            f"both_correct={reverse_query_metrics['paired']['both_correct_rate']:.4f}, "
+            "changed_label_response="
+            f"{reverse_query_metrics['paired']['prediction_change_rate_changed_labels']:.4f}"
+        )
 
 
 if __name__ == "__main__":

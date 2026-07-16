@@ -79,6 +79,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("object", "endpoint_pair"),
         default="object",
     )
+    parser.add_argument(
+        "--reverse-query-eval",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Evaluate every selected checkpoint on paired reversed queries.",
+    )
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -102,6 +108,7 @@ def command_for(
     external_validation_dataset: str | None,
     validation_selection_metric: str,
     trua_goal_representation: str,
+    reverse_query_eval: bool,
     metrics_path: Path,
 ) -> list[str]:
     common = [
@@ -143,6 +150,8 @@ def command_for(
                 external_validation_dataset,
             ]
         )
+    if reverse_query_eval:
+        common.append("--reverse_query_eval")
     if core == "trua":
         return [
             sys.executable,
@@ -292,6 +301,7 @@ def main() -> None:
                 "trua": ["transition", "edge"],
             },
             "trua_goal_representation": args.trua_goal_representation,
+            "reverse_query_evaluation": args.reverse_query_eval,
         },
         "jobs": [],
     }
@@ -313,6 +323,7 @@ def main() -> None:
             external_validation_dataset=args.external_validation_dataset,
             validation_selection_metric=args.validation_selection_metric,
             trua_goal_representation=args.trua_goal_representation,
+            reverse_query_eval=args.reverse_query_eval,
             metrics_path=job["metrics_path"],
         )
         manifest["jobs"].append(
@@ -367,6 +378,7 @@ def main() -> None:
                 external_validation_dataset=args.external_validation_dataset,
                 validation_selection_metric=args.validation_selection_metric,
                 trua_goal_representation=args.trua_goal_representation,
+                reverse_query_eval=args.reverse_query_eval,
                 metrics_path=job["metrics_path"],
             )
             log_handle = log_path.open("w", encoding="utf-8")

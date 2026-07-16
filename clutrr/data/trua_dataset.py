@@ -5,6 +5,11 @@ from clutrr.data.clutrr_dataset import CLUTRRDataset, official_hop_count
 from clutrr.utils.entity_alignment import align_entity_spans_to_tokens
 from clutrr.utils.graph_reasoning import apply_bijective_map, parse_graph_and_path
 from clutrr.utils.parsing import parse_pair_literal
+from clutrr.utils.query_direction import (
+    inverse_relation,
+    parse_gender_map,
+    reverse_path_relations,
+)
 
 
 class TruaClutrrDataset(CLUTRRDataset):
@@ -17,16 +22,19 @@ class TruaClutrrDataset(CLUTRRDataset):
         tokenizer=None,
         augment=False,
         augment_seed=None,
+        reverse_query=False,
     ):
         super().__init__(root, dataset, split, data_percentage)
         self.tokenizer = tokenizer
         self.augment = augment
         self.augment_seed = augment_seed
+        self.reverse_query = reverse_query
         self.split = split
 
         raw_rows = list(self.data)
         self.stats = {
             "split": split,
+            "reverse_query": reverse_query,
             "raw_total": len(raw_rows),
             "valid_total": 0,
             "dropped_total": 0,
@@ -56,9 +64,12 @@ class TruaClutrrDataset(CLUTRRDataset):
         query = parse_pair_literal(row[3])
         if query is None:
             return None, "query_parse_failed"
-        target_relation = row[5]
+        original_query = query
+        original_target_relation = row[5]
+        target_relation = original_target_relation
         all_names = graph_info["all_names"]
-        path_rel_labels = graph_info.get("path_relation_labels", [])
+        path_indices = list(graph_info["path_node_indices"])
+        path_rel_labels = list(graph_info.get("path_relation_labels", []))
 
         query_edge = parse_pair_literal(row[13])
         if query_edge is None:
@@ -68,6 +79,28 @@ class TruaClutrrDataset(CLUTRRDataset):
             return None, "query_edge_not_int"
         if not (0 <= sub_idx < len(all_names) and 0 <= obj_idx < len(all_names)):
             return None, "query_edge_out_of_range"
+
+        if self.reverse_query:
+            genders = parse_gender_map(row[14] if len(row) > 14 else "")
+            reversed_target = inverse_relation(
+                target_relation,
+                genders.get(query[0]),
+            )
+            reversed_relations = reverse_path_relations(
+                path_rel_labels,
+                path_indices,
+                all_names,
+                genders,
+            )
+            if reversed_target is None:
+                return None, "reverse_target_failed"
+            if reversed_relations is None:
+                return None, "reverse_path_relations_failed"
+            query = (query[1], query[0])
+            sub_idx, obj_idx = obj_idx, sub_idx
+            target_relation = reversed_target
+            path_indices = list(reversed(path_indices))
+            path_rel_labels = reversed_relations
 
         alignments = align_entity_spans_to_tokens(story_str, all_names, self.tokenizer)
 
@@ -79,7 +112,7 @@ class TruaClutrrDataset(CLUTRRDataset):
                 node_spans.append(res["token_span"])
             else:
                 node_spans.append(None)
-                if name_idx in graph_info["path_node_indices"]:
+                if name_idx in path_indices:
                     valid_sample = False
 
         if not valid_sample:
@@ -95,12 +128,19 @@ class TruaClutrrDataset(CLUTRRDataset):
             "query": query,
             "query_indices": (sub_idx, obj_idx),
             "target_id": target_id,
-            "path_indices": graph_info["path_node_indices"],
+            "path_indices": path_indices,
             "path_rel_labels": path_rel_labels,
             "node_spans": node_spans,
             "num_nodes": len(all_names),
             "hops": official_hop_count(row),
-            "reference_path_hops": len(graph_info["path_node_indices"]) - 1,
+            "reference_path_hops": len(path_indices) - 1,
+            "query_direction": "reversed" if self.reverse_query else "original",
+            "original_query": original_query,
+            "original_target_id": relation_id_map.get(
+                original_target_relation,
+                relation_id_map["nothing"],
+            ),
+            "label_changed_under_reverse": target_relation != original_target_relation,
         }
 
         if self.augment:
@@ -127,7 +167,7 @@ class TruaClutrrDataset(CLUTRRDataset):
                         aug_node_spans.append(res["token_span"])
                     else:
                         aug_node_spans.append(None)
-                        if graph_info["path_node_indices"].count(j) > 0:
+                        if path_indices.count(j) > 0:
                             valid_aug = False
                 if not valid_aug:
                     return None, "aug_entity_alignment_failed"
