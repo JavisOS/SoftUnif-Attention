@@ -386,6 +386,15 @@ def build_arg_parser(defaults=None):
         help="Inject the adapter-provided query goal into the step-selection query.",
     )
     parser.add_argument(
+        "--goal_guidance_mode",
+        choices=("additive", "modulated"),
+        default="additive",
+        help=(
+            "Combine the goal with each source query additively, or use "
+            "zero-initialized multiplicative feature modulation."
+        ),
+    )
+    parser.add_argument(
         "--goal_representation",
         choices=("object", "endpoint_pair", "encoded_query"),
         default=defaults["goal_representation"],
@@ -547,6 +556,7 @@ def run_training():
             f"prediction_head={args.prediction_head}, "
             f"relation_conditioning={args.use_relation_conditioning}, "
             f"goal_guidance={args.use_goal_guidance}, aggregation_branch={args.use_aggregation_branch}, "
+            f"goal_guidance_mode={args.goal_guidance_mode}, "
             f"goal_representation={args.goal_representation}, "
             f"unit_encoding={args.unit_encoding_mode}, "
             f"step_branch={args.use_step_branch}, "
@@ -708,6 +718,7 @@ def run_training():
         consistency_mode=args.consistency_mode,
         use_relation_conditioning=args.use_relation_conditioning,
         use_goal_guidance=args.use_goal_guidance,
+        goal_guidance_mode=args.goal_guidance_mode,
         goal_representation=args.goal_representation,
         unit_encoding_mode=args.unit_encoding_mode,
         use_aggregation_branch=args.use_aggregation_branch,
@@ -926,6 +937,10 @@ def run_training():
             len(train_ds) * args.epochs / max(training_seconds, 1e-9)
         ),
     }
+    unwrapped_model = model.module if hasattr(model, "module") else model
+    goal_projection_weight_norm = float(
+        unwrapped_model.entity_attn.q_obj.weight.detach().float().norm().cpu()
+    )
     print(selection_message)
     print(test_message)
     print(f"  Overall Acc (Base):   {test_metrics['overall']:.4f}")
@@ -977,6 +992,8 @@ def run_training():
                 "lambda_edge": args.lambda_edge,
                 "lambda_consistency": args.lambda_consistency,
                 "use_goal_guidance": args.use_goal_guidance,
+                "goal_guidance_mode": args.goal_guidance_mode,
+                "goal_projection_weight_norm": goal_projection_weight_norm,
                 "goal_representation": args.goal_representation,
                 "unit_encoding_mode": args.unit_encoding_mode,
                 "use_aggregation_branch": args.use_aggregation_branch,

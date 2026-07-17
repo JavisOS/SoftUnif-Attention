@@ -13,6 +13,7 @@ class RelationConditionedEntityAttention(nn.Module):
         top_k: int | None = 8,
         use_relation_conditioning: bool = True,
         use_goal_guidance: bool = True,
+        goal_guidance_mode: str = "additive",
         use_aggregation_branch: bool = True,
         use_step_branch: bool = True,
         relation_score_mode: str = "mlp",
@@ -24,6 +25,11 @@ class RelationConditionedEntityAttention(nn.Module):
         self.top_k = top_k
         self.use_relation_conditioning = use_relation_conditioning
         self.use_goal_guidance = use_goal_guidance
+        if goal_guidance_mode not in {"additive", "modulated"}:
+            raise ValueError(
+                f"Unsupported goal-guidance mode: {goal_guidance_mode}"
+            )
+        self.goal_guidance_mode = goal_guidance_mode
         self.use_aggregation_branch = use_aggregation_branch
         self.use_step_branch = use_step_branch
         if relation_score_mode not in {"mlp", "bilinear"}:
@@ -39,6 +45,10 @@ class RelationConditionedEntityAttention(nn.Module):
         self.k_hop = nn.Linear(hidden_size, hidden_size)
         self.v_hop = nn.Linear(hidden_size, hidden_size)
         self.q_obj = nn.Linear(hidden_size, hidden_size, bias=False)
+        if self.goal_guidance_mode == "modulated":
+            # Begin exactly at the unguided scorer; gradients can then learn
+            # source-dependent feature modulation from the query goal.
+            nn.init.zeros_(self.q_obj.weight)
 
         self.rel_mlp = nn.Sequential(
             nn.Linear(hidden_size * 3, hidden_size),
@@ -119,7 +129,12 @@ class RelationConditionedEntityAttention(nn.Module):
         else:
             obj_valid = torch.ones(bsz, device=entity_embs.device, dtype=torch.bool)
         if self.use_goal_guidance and goal_embedding is not None:
-            q_h = q_h + self.q_obj(goal_embedding).unsqueeze(1) * obj_valid[:, None, None].to(q_h.dtype)
+            goal_signal = self.q_obj(goal_embedding).unsqueeze(1)
+            goal_signal = goal_signal * obj_valid[:, None, None].to(q_h.dtype)
+            if self.goal_guidance_mode == "additive":
+                q_h = q_h + goal_signal
+            else:
+                q_h = q_h * (1.0 + torch.tanh(goal_signal))
 
         k_h = self.k_hop(entity_embs)
         base_scores_hop = torch.matmul(q_h, k_h.transpose(1, 2)) / math.sqrt(hidden_size)

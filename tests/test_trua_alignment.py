@@ -100,6 +100,7 @@ def test_unit_encoding_mode_is_exposed_by_training_cli():
     assert defaults.unit_encoding_mode == "joint"
     assert defaults.sparse_top_k == 0
     assert defaults.force_gold_edges is False
+    assert defaults.goal_guidance_mode == "additive"
     separate = parser.parse_args(["--unit_encoding_mode", "separate"])
     assert separate.unit_encoding_mode == "separate"
 
@@ -125,6 +126,38 @@ def test_goal_embedding_changes_step_scores_only_when_enabled():
     _, edges_a = layer(units, mask, goal_embedding=goal_a)
     _, edges_b = layer(units, mask, goal_embedding=goal_b)
     assert torch.allclose(_dense_hop_scores(edges_a, 5), _dense_hop_scores(edges_b, 5))
+
+
+def test_modulated_goal_guidance_starts_unguided_and_can_change_scores():
+    torch.manual_seed(11)
+    units = torch.randn(2, 5, 12)
+    mask = torch.ones(2, 5, dtype=torch.bool)
+    goal_a = torch.randn(2, 12)
+    goal_b = torch.randn(2, 12)
+    layer = RelationConditionedEntityAttention(
+        hidden_size=12,
+        num_relations=4,
+        dropout=0.0,
+        top_k=None,
+        goal_guidance_mode="modulated",
+    ).eval()
+
+    assert torch.count_nonzero(layer.q_obj.weight) == 0
+    _, initial_a = layer(units, mask, goal_embedding=goal_a)
+    _, initial_b = layer(units, mask, goal_embedding=goal_b)
+    assert torch.allclose(
+        _dense_hop_scores(initial_a, 5),
+        _dense_hop_scores(initial_b, 5),
+    )
+
+    with torch.no_grad():
+        layer.q_obj.weight.copy_(torch.eye(12))
+    _, modulated_a = layer(units, mask, goal_embedding=goal_a)
+    _, modulated_b = layer(units, mask, goal_embedding=goal_b)
+    assert not torch.allclose(
+        _dense_hop_scores(modulated_a, 5),
+        _dense_hop_scores(modulated_b, 5),
+    )
 
 
 def test_validation_split_is_fixed_and_stratified():
