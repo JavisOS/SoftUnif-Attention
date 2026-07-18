@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TRUA proposition adapter for ProofWriter, RuleTaker, and PrOntoQA."""
+"""TRUA proposition adapter for natural-language logical reasoning tasks."""
 
 from __future__ import annotations
 
@@ -35,7 +35,9 @@ from clutrr.models.trua_core import (
 from clutrr.training.model_selection import clone_model_state, repository_revision, restore_model_state
 from generic_trua_prop import (
     BINARY_LABEL_NAMES,
+    PFOLIO_LABEL_NAMES,
     PROOFWRITER_LABEL_NAMES,
+    load_pfolio,
     load_prontoqa,
     load_proofwriter,
     load_ruletaker_gfair,
@@ -95,6 +97,8 @@ def split_record(samples):
 def label_names_for_dataset(dataset):
     if dataset == "proofwriter":
         return PROOFWRITER_LABEL_NAMES
+    if dataset == "pfolio":
+        return PFOLIO_LABEL_NAMES
     return BINARY_LABEL_NAMES
 
 
@@ -103,6 +107,7 @@ def complete_input_limits(dataset, max_sentences, max_context_tokens, allow_trun
         return max_sentences, max_context_tokens
     minimum_sentences = {
         "proofwriter": 32,
+        "pfolio": 32,
         "ruletaker_raw": 32,
         "ruletaker_gfair": 32,
         "prontoqa": 24,
@@ -562,7 +567,11 @@ def _split_samples(samples, validation_fraction, seed):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", choices=["proofwriter", "ruletaker_gfair", "ruletaker_raw", "prontoqa"], required=True)
+    parser.add_argument(
+        "--dataset",
+        choices=["proofwriter", "ruletaker_gfair", "ruletaker_raw", "prontoqa", "pfolio"],
+        required=True,
+    )
     parser.add_argument("--root", required=True)
     parser.add_argument("--model-name", default="microsoft/deberta-base")
     parser.add_argument(
@@ -622,6 +631,10 @@ def main():
         train = load_proofwriter(root, train_depths, "train", args.limit_train)
         validation = load_proofwriter(root, train_depths, "dev", args.limit_test)
         tests = {f"depth-{d}": load_proofwriter(root, [d], "test", args.limit_test) for d in test_depths}
+    elif args.dataset == "pfolio":
+        train = load_pfolio(root, "train", args.limit_train)
+        validation = load_pfolio(root, "validation", args.limit_test)
+        tests = {"test": load_pfolio(root, "test", args.limit_test)}
     elif args.dataset == "ruletaker_gfair":
         train = load_ruletaker_gfair(root, "train", args.limit_train)
         validation = load_ruletaker_gfair(root, "dev", args.limit_test)

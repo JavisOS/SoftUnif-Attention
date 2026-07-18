@@ -23,6 +23,13 @@ DEFAULT_BACKBONES = (
 DEFAULT_CORES = ("encoder", "self_attention", "trua")
 
 DATASETS = {
+    "pfolio": {
+        "dataset": "pfolio",
+        "root": "/root/TRUA/data/pfolio",
+        "extra": (),
+        "max_sentences": 32,
+        "labels": ("false", "true", "unknown"),
+    },
     "proofwriter": {
         "dataset": "proofwriter",
         "root": "/root/TRUA/data/proofwriter/raw/proofwriter-dataset-V2020.12.3",

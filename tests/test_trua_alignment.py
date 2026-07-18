@@ -1,4 +1,6 @@
 import sys
+import csv
+import json
 from tempfile import TemporaryDirectory
 from pathlib import Path
 
@@ -16,6 +18,7 @@ from transformer_trua_prop import (
     validation_selection_key,
 )
 from generic_trua_prop import _first_existing
+from generic_trua_prop import load_pfolio_corpus
 
 
 def _dense_hop_scores(edges, unit_count):
@@ -113,6 +116,7 @@ def test_adapter_specs_distinguish_paths_from_evidence_sets():
 
 def test_proposition_defaults_preserve_complete_paper_inputs():
     assert complete_input_limits("proofwriter", 16, 192) == (32, 512)
+    assert complete_input_limits("pfolio", 16, 192) == (32, 512)
     assert complete_input_limits("ruletaker_raw", 24, 192) == (32, 512)
     assert complete_input_limits("prontoqa", 24, 192) == (24, 512)
     assert complete_input_limits("proofwriter", 16, 192, allow_truncation=True) == (16, 192)
@@ -127,3 +131,90 @@ def test_dataset_variant_resolution_does_not_mix_existing_directories():
         extended.mkdir()
 
         assert _first_existing([standard, extended]) == standard
+
+
+def test_pfolio_maps_official_splits_and_expands_derivation_references():
+    with TemporaryDirectory() as temporary_directory:
+        root = Path(temporary_directory)
+        premises = ["Premise one.", "Premise two."]
+        train_item = {
+            "example_id": 0,
+            "story_id": 7,
+            "premises": "\n".join(premises),
+            "conclusion": "Train conclusion.",
+            "label": "True",
+        }
+        test_item = {
+            "example_id": 1,
+            "story_id": 7,
+            "premises": "\n".join(premises),
+            "conclusion": "Held-out conclusion.",
+            "label": "False",
+        }
+        validation_item = {
+            "example_id": 2,
+            "story_id": 7,
+            "premises": "\n".join(premises),
+            "conclusion": "Validation conclusion.",
+            "label": "True",
+        }
+        (root / "folio_train.jsonl").write_text(json.dumps(train_item) + "\n", encoding="utf-8")
+        (root / "folio_test.jsonl").write_text(json.dumps(test_item) + "\n", encoding="utf-8")
+        (root / "folio_validation.jsonl").write_text(
+            json.dumps(validation_item) + "\n", encoding="utf-8"
+        )
+        fieldnames = [
+            "story_id",
+            "Premises - NL",
+            "Corrected Premises - NL",
+            "Conclusions - NL",
+            "Corrected Conclusions - NL",
+            "Truth Value",
+            "Premises used",
+            "Derivation index",
+        ]
+        with (root / "pfolio.csv").open("w", encoding="utf-8", newline="") as destination:
+            writer = csv.DictWriter(destination, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "story_id": "7",
+                    "Premises - NL": "\n".join(premises),
+                    "Conclusions - NL": "Train conclusion.",
+                    "Truth Value": "T",
+                }
+            )
+            writer.writerow({"Premises used": "1", "Derivation index": "D1"})
+            writer.writerow({"Premises used": "D1, 2", "Derivation index": "D2"})
+            writer.writerow(
+                {
+                    "story_id": "7",
+                    "Conclusions - NL": "Editorial duplicate.",
+                    "Truth Value": "F",
+                }
+            )
+            writer.writerow({"Premises used": "1", "Derivation index": "D1"})
+            writer.writerow(
+                {
+                    "story_id": "7",
+                    "Conclusions - NL": "Held-out conclusion.",
+                    "Truth Value": "F",
+                }
+            )
+            writer.writerow({"Premises used": "2", "Derivation index": "D1"})
+            writer.writerow(
+                {
+                    "story_id": "7",
+                    "Conclusions - NL": "Validation conclusion.",
+                    "Truth Value": "T",
+                }
+            )
+            writer.writerow({"Premises used": "1", "Derivation index": "D1"})
+
+        samples, audit = load_pfolio_corpus(root, return_audit=True)
+
+        assert [sample["split"] for sample in samples] == ["train", "test", "validation"]
+        assert samples[0]["trace_labels"] == [1, 1]
+        assert samples[1]["trace_labels"] == [0, 1]
+        assert samples[0]["depth"] == 2
+        assert len(audit["skipped_editorial_rows"]) == 1
