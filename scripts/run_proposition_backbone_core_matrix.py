@@ -21,6 +21,7 @@ DEFAULT_BACKBONES = (
     "deberta-v3:/vepfs/trua_models/hf/deberta-v3-base",
 )
 DEFAULT_CORES = ("encoder", "self_attention", "trua")
+SUPPORTED_CORES = (*DEFAULT_CORES, "dual_attention")
 
 DATASETS = {
     "pfolio": {
@@ -88,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--cores",
         nargs="+",
-        choices=DEFAULT_CORES,
+        choices=SUPPORTED_CORES,
         default=list(DEFAULT_CORES),
     )
     parser.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 42])
@@ -128,7 +129,7 @@ def command_for(
     metrics_path: Path,
 ) -> list[str]:
     specification = DATASETS[dataset_name]
-    lambda_evidence = 0.0 if core == "encoder" else 1.0
+    lambda_evidence = 0.0 if core in {"encoder", "dual_attention"} else 1.0
     command = [
         sys.executable,
         "-u",
@@ -170,6 +171,8 @@ def command_for(
     if core == "self_attention":
         command.extend(["--no-use-goal-guidance", "--no-use-query-anchor"])
     elif core == "trua":
+        command.extend(["--use-goal-guidance", "--use-query-anchor"])
+    elif core == "dual_attention":
         command.extend(["--use-goal-guidance", "--use-query-anchor"])
     return command
 
@@ -281,11 +284,13 @@ def main() -> None:
                 "encoder": 0.0,
                 "self_attention": 1.0,
                 "trua": 1.0,
+                "dual_attention": 0.0,
             },
             "selection_query_routes": {
                 "encoder": [],
                 "self_attention": [],
                 "trua": ["query_anchor", "explicit_goal_term"],
+                "dual_attention": ["query_anchor", "query-conditioned sensory units"],
             },
             "task_labels": {
                 dataset_name: list(DATASETS[dataset_name]["labels"])
