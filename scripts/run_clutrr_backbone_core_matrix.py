@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--cores",
         nargs="+",
-        choices=("encoder", "self_attention_matched", "trua"),
+        choices=("encoder", "self_attention_matched", "dual_attention", "trua"),
         default=list(DEFAULT_CORES),
     )
     parser.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 42])
@@ -290,6 +290,7 @@ def main() -> None:
             "matched_unit_objectives": {
                 "self_attention_matched": ["transition", "edge"],
                 "trua": ["transition", "edge"],
+                "dual_attention": [],
             },
             "trua_goal_representation": args.trua_goal_representation,
         },
