@@ -9,12 +9,42 @@ unit reasoning core.
 from __future__ import annotations
 
 import math
+import os
+import sys
+from pathlib import Path
 
 import torch
 import torch.nn as nn
 
 from clutrr.models.backbones import build_backbone_model, is_decoder_only_model
 from clutrr.models.trua_core import TransitionRegularizedUnitAttentionCore
+
+
+def _official_dual_attention_class():
+    """Load the pinned official DAT implementation without vendoring it."""
+    try:
+        from dual_attention.dual_attention import DualAttention
+
+        return DualAttention
+    except ImportError:
+        candidates = [
+            os.environ.get("TRUA_DUAL_ATTENTION_ROOT"),
+            str(Path(__file__).resolve().parents[2] / "external_baselines" / "dual-attention"),
+            "/root/TRUA/external_baselines/dual-attention",
+        ]
+        for candidate in candidates:
+            if candidate and Path(candidate).is_dir():
+                sys.path.insert(0, candidate)
+                try:
+                    from dual_attention.dual_attention import DualAttention
+
+                    return DualAttention
+                except ImportError:
+                    continue
+    raise ImportError(
+        "Dual Attention is unavailable. Install the official implementation or "
+        "set TRUA_DUAL_ATTENTION_ROOT to its repository root."
+    )
 
 
 class ContentSelfAttentionCore(nn.Module):
@@ -62,6 +92,98 @@ class ContentSelfAttentionCore(nn.Module):
         return updated, logits
 
     def forward(self, units: torch.Tensor, valid_mask: torch.Tensor, query: torch.Tensor) -> torch.Tensor:
+        updated, _ = self.forward_with_scores(units, valid_mask, query)
+        return updated
+
+
+class OfficialDualAttentionCore(nn.Module):
+    """Task-adapted wrapper around the official DualAttention module."""
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_layers: int = 2,
+        sensory_heads: int = 4,
+        relational_heads: int = 4,
+        relations: int = 4,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        DualAttention = _official_dual_attention_class()
+        self.query_proj = nn.Linear(hidden_size, hidden_size)
+        self.layers = nn.ModuleList(
+            [
+                nn.ModuleDict(
+                    {
+                        "dual": DualAttention(
+                            d_model=hidden_size,
+                            n_heads_sa=sensory_heads,
+                            n_heads_ra=relational_heads,
+                            dropout=dropout,
+                            ra_kwargs={"n_relations": relations},
+                            ra_type="relational_attention",
+                        ),
+                        "attn_norm": nn.LayerNorm(hidden_size),
+                        "ffn": nn.Sequential(
+                            nn.Linear(hidden_size, hidden_size * 2),
+                            nn.GELU(),
+                            nn.Dropout(dropout),
+                            nn.Linear(hidden_size * 2, hidden_size),
+                            nn.Dropout(dropout),
+                        ),
+                        "ffn_norm": nn.LayerNorm(hidden_size),
+                    }
+                )
+                for _ in range(num_layers)
+            ]
+        )
+
+    @staticmethod
+    def _mean_attention_logits(self_scores, relation_scores, pair_mask):
+        score_groups = []
+        if self_scores is not None:
+            score_groups.append(self_scores.mean(dim=1))
+        if relation_scores:
+            score_groups.append(relation_scores[0].mean(dim=1))
+        if not score_groups:
+            raise RuntimeError("Official DualAttention returned no attention scores")
+        probabilities = torch.stack(score_groups, dim=0).mean(dim=0)
+        return torch.log(probabilities.clamp_min(1e-8)).masked_fill(~pair_mask, -1e4)
+
+    def forward_with_scores(
+        self,
+        units: torch.Tensor,
+        valid_mask: torch.Tensor,
+        query: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        x = units + self.query_proj(query).unsqueeze(1)
+        symbols = units
+        key_mask = valid_mask[:, None, None, :]
+        pair_mask = valid_mask.unsqueeze(2) & valid_mask.unsqueeze(1)
+        logits = None
+        for layer in self.layers:
+            attended, self_scores, relation_scores = layer["dual"](
+                x,
+                symbols,
+                attn_mask=key_mask,
+                need_weights=True,
+            )
+            x = layer["attn_norm"](x + attended)
+            x = layer["ffn_norm"](x + layer["ffn"](x))
+            x = x * valid_mask.unsqueeze(-1).to(x.dtype)
+            logits = self._mean_attention_logits(
+                self_scores,
+                relation_scores,
+                pair_mask,
+            )
+        return x, logits
+
+    def forward(
+        self,
+        units: torch.Tensor,
+        valid_mask: torch.Tensor,
+        query: torch.Tensor,
+    ) -> torch.Tensor:
         updated, _ = self.forward_with_scores(units, valid_mask, query)
         return updated
 
@@ -158,7 +280,14 @@ class RcaStyleUnitCore(nn.Module):
 class ControlledClutrrBaseline(TransitionRegularizedUnitAttentionCore):
     """Shared wrapper for controlled encoder and unit-reasoning baselines."""
 
-    SUPPORTED_CORES = {"encoder", "self_attention", "self_attention_matched", "mac", "rca"}
+    SUPPORTED_CORES = {
+        "encoder",
+        "self_attention",
+        "self_attention_matched",
+        "dual_attention",
+        "mac",
+        "rca",
+    }
 
     def __init__(
         self,
@@ -214,6 +343,8 @@ class ControlledClutrrBaseline(TransitionRegularizedUnitAttentionCore):
 
         if core_type in {"self_attention", "self_attention_matched"}:
             self.unit_core = ContentSelfAttentionCore(self.hidden_size)
+        elif core_type == "dual_attention":
+            self.unit_core = OfficialDualAttentionCore(self.hidden_size)
         elif core_type == "mac":
             self.unit_core = MacStyleUnitCore(self.hidden_size, steps=mac_steps)
         elif core_type == "rca":
@@ -294,7 +425,7 @@ class ControlledClutrrBaseline(TransitionRegularizedUnitAttentionCore):
         units = self.get_entity_embeddings(sequence, entity_spans)
         valid_mask = entity_spans[:, :, 0] != -1
         query = self._build_query_context(units, query_indices)
-        if self.core_type == "self_attention_matched":
+        if self.core_type in {"self_attention_matched", "dual_attention"}:
             updated_units, attention_logits = self.unit_core.forward_with_scores(
                 units,
                 valid_mask,

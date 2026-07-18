@@ -26,7 +26,10 @@ REPO_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(SCRIPT_DIR))
 from clutrr.models.relation_attention import RelationConditionedEntityAttention
-from clutrr.models.controlled_unit_baselines import ContentSelfAttentionCore
+from clutrr.models.controlled_unit_baselines import (
+    ContentSelfAttentionCore,
+    OfficialDualAttentionCore,
+)
 from clutrr.models.trua_core import (
     PROPOSITION_EVIDENCE_ADAPTER,
     TransitionRegularizedUnitAttentionCore,
@@ -222,7 +225,7 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
         num_labels: int = 2,
     ):
         super().__init__()
-        if core_type not in {"encoder", "trua", "self_attention"}:
+        if core_type not in {"encoder", "trua", "self_attention", "dual_attention"}:
             raise ValueError(f"Unsupported proposition core: {core_type}")
         self.adapter_spec = PROPOSITION_EVIDENCE_ADAPTER
         self.encoder = AutoModel.from_pretrained(model_name, local_files_only=True)
@@ -259,6 +262,8 @@ class TransformerTruaProp(TransitionRegularizedUnitAttentionCore):
             )
         elif core_type == "self_attention":
             self.unit_attn = ContentSelfAttentionCore(hidden, num_heads=8, dropout=dropout)
+        elif core_type == "dual_attention":
+            self.unit_attn = OfficialDualAttentionCore(hidden, dropout=dropout)
         else:
             self.unit_attn = None
         self.classifier = nn.Sequential(
@@ -644,7 +649,7 @@ def main():
     parser.add_argument("--relation-channels", type=int, default=8)
     parser.add_argument(
         "--core-type",
-        choices=["encoder", "trua", "self_attention"],
+        choices=["encoder", "trua", "self_attention", "dual_attention"],
         default="trua",
     )
     parser.add_argument("--use-relation-conditioning", action=argparse.BooleanOptionalAction, default=True)
@@ -660,6 +665,8 @@ def main():
     args = parser.parse_args()
     if args.core_type == "encoder" and args.lambda_evidence != 0.0:
         parser.error("--core-type encoder requires --lambda-evidence 0")
+    if args.core_type == "dual_attention" and args.lambda_evidence != 0.0:
+        parser.error("--core-type dual_attention requires --lambda-evidence 0")
     args.max_sents, args.max_len = complete_input_limits(
         args.dataset,
         args.max_sents,
