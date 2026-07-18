@@ -116,11 +116,21 @@ def complete_input_limits(dataset, max_sentences, max_context_tokens, allow_trun
 
 
 class TextEvidenceDataset(Dataset):
-    def __init__(self, samples, tokenizer, max_sents=12, max_len=160):
+    def __init__(
+        self,
+        samples,
+        tokenizer,
+        max_sents=12,
+        max_len=160,
+        max_query_len=64,
+        max_unit_len=96,
+    ):
         self.samples = samples
         self.tokenizer = tokenizer
         self.max_sents = max_sents
         self.max_len = max_len
+        self.max_query_len = max_query_len
+        self.max_unit_len = max_unit_len
 
     def __len__(self):
         return len(self.samples)
@@ -150,13 +160,25 @@ class TextEvidenceDataset(Dataset):
             max_length=self.max_len,
             return_tensors="pt",
         )
-        queries = tok([x["query"] for x in batch], padding=True, truncation=True, max_length=64, return_tensors="pt")
+        queries = tok(
+            [x["query"] for x in batch],
+            padding=True,
+            truncation=True,
+            max_length=self.max_query_len,
+            return_tensors="pt",
+        )
         flat_sents = []
         sent_lens = []
         for x in batch:
             sent_lens.append(len(x["sentences"]))
             flat_sents.extend(x["sentences"])
-        sents = tok(flat_sents, padding=True, truncation=True, max_length=96, return_tensors="pt")
+        sents = tok(
+            flat_sents,
+            padding=True,
+            truncation=True,
+            max_length=self.max_unit_len,
+            return_tensors="pt",
+        )
         max_s = max(sent_lens)
         mask = torch.zeros(len(batch), max_s, dtype=torch.bool)
         evidence = torch.zeros(len(batch), max_s, dtype=torch.float32)
@@ -401,7 +423,14 @@ def run(train, validation, tests, args):
         "validation": split_record(validation),
         "tests": {name: split_record(samples) for name, samples in tests.items()},
     }
-    train_ds = TextEvidenceDataset(train, tokenizer, args.max_sents, args.max_len)
+    train_ds = TextEvidenceDataset(
+        train,
+        tokenizer,
+        args.max_sents,
+        args.max_len,
+        args.max_query_len,
+        args.max_unit_len,
+    )
     data_order_seed = args.seed + 271828
     data_order_generator = torch.Generator()
     data_order_generator.manual_seed(data_order_seed)
@@ -412,7 +441,14 @@ def run(train, validation, tests, args):
         collate_fn=train_ds.collate,
         generator=data_order_generator,
     )
-    validation_ds = TextEvidenceDataset(validation, tokenizer, args.max_sents, args.max_len)
+    validation_ds = TextEvidenceDataset(
+        validation,
+        tokenizer,
+        args.max_sents,
+        args.max_len,
+        args.max_query_len,
+        args.max_unit_len,
+    )
     validation_loader = DataLoader(
         validation_ds,
         batch_size=args.batch_size,
@@ -471,7 +507,14 @@ def run(train, validation, tests, args):
         torch.cuda.synchronize(device)
     test_started_at = time.perf_counter()
     for name, samples in tests.items():
-        ds = TextEvidenceDataset(samples, tokenizer, args.max_sents, args.max_len)
+        ds = TextEvidenceDataset(
+            samples,
+            tokenizer,
+            args.max_sents,
+            args.max_len,
+            args.max_query_len,
+            args.max_unit_len,
+        )
         loader = DataLoader(ds, batch_size=args.batch_size, collate_fn=ds.collate)
         results[name] = evaluate(model, loader, device, label_names)
     if device.type == "cuda":
@@ -501,6 +544,8 @@ def run(train, validation, tests, args):
         "test_qdeps": args.test_qdeps,
         "max_sentences": args.max_sents,
         "max_context_tokens": args.max_len,
+        "max_query_tokens": args.max_query_len,
+        "max_unit_tokens": args.max_unit_len,
         "context_query_encoding": "tokenizer-native sequence pair",
         "input_truncation_allowed": args.allow_input_truncation,
         "train": len(train),
@@ -592,6 +637,8 @@ def main():
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--max-sents", type=int, default=12)
     parser.add_argument("--max-len", type=int, default=160)
+    parser.add_argument("--max-query-len", type=int, default=64)
+    parser.add_argument("--max-unit-len", type=int, default=96)
     parser.add_argument("--allow-input-truncation", action="store_true")
     parser.add_argument("--freeze-encoder", action="store_true")
     parser.add_argument("--relation-channels", type=int, default=8)

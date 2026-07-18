@@ -26,7 +26,7 @@ DATASETS = {
     "pfolio": {
         "dataset": "pfolio",
         "root": "/root/TRUA/data/pfolio",
-        "extra": (),
+        "extra": ("--max-query-len", "96"),
         "max_sentences": 32,
         "labels": ("false", "true", "unknown"),
     },
